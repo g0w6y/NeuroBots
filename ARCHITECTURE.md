@@ -144,7 +144,41 @@ they revealed about safely re-running the attack suite.
 | API9 | Improper Inventory Management | Covered | `shadow_endpoint_access` for unlisted routes under a protected prefix — `backend/security_checks.py` |
 | API10 | Unsafe Consumption of APIs | Not attempted, by design | This gateway is an inbound reverse proxy — it doesn't consume third-party APIs on the tenant's behalf, so API10 isn't a meaningful axis for it |
 
-## 5. Where the diagrams above are proven, not just drawn
+## 5. Horizontal scaling (`WORKERS=N`)
+
+```mermaid
+graph LR
+    LB["Load balancer /<br/>reverse proxy"]
+    W1["Gateway worker 1"]
+    W2["Gateway worker 2"]
+    W3["Gateway worker 3"]
+    Redis[("Redis<br/>ownership · rate windows ·<br/>escalation state")]
+    PG[("PostgreSQL<br/>alerts + incidents")]
+
+    LB --> W1
+    LB --> W2
+    LB --> W3
+    W1 <-->|shared state| Redis
+    W2 <-->|shared state| Redis
+    W3 <-->|shared state| Redis
+    W1 -->|writes| PG
+    W2 -->|writes| PG
+    W3 -->|writes| PG
+
+    subgraph Limitation["Known limitation"]
+        WS["/ws/events push<br/>does NOT fan out —<br/>a socket only sees<br/>its own worker's events.<br/>Polling endpoints unaffected."]
+    end
+```
+
+Verified with real `WORKERS=3` against real Docker Redis + Postgres on
+2026-08-08: rate limiting, BOLA ownership, and identity-level auto-escalation
+all confirmed correctly shared across all 3 independent processes — and
+confirmed to genuinely diverge when Redis is unreachable, proving the shared
+state actually matters rather than assuming it. See `DEPLOYMENT.md` for the
+full methodology (including a real test-methodology bug caught and fixed
+along the way) and `backend/MEMORY.md` for the incident-level detail.
+
+## 6. Where the diagrams above are proven, not just drawn
 
 - Flow diagram (§2): every step corresponds 1:1 to a numbered comment in
   `check_and_forward()` in `backend/main.py`.
