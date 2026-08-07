@@ -1,5 +1,6 @@
 import asyncio
 import time
+import json
 import itertools
 from collections import defaultdict, deque
 from typing import Optional
@@ -280,6 +281,52 @@ class SharedStore:
                 self._degrade("increment_escalation_count", e)
         self._escalation_counts[key] += 1
         return self._escalation_counts[key]
+
+    # --------------------------------------------------------------------- ml
+
+    async def get_ml_risk(self, subject: str) -> Optional[int]:
+        # written by the separate ml/worker.py process (ml.md), never by this
+        # process. if it's unreachable, that just means no ML signal is
+        # available this request - there's no in-memory fallback here, the
+        # worker's whole design depends on shared Redis, and the gateway must
+        # still work perfectly with zero ML signal if that process isn't running.
+        if not self.connected:
+            return None
+        try:
+            val = await self.redis_client.get(f"ml_risk:{subject}")
+            return int(val) if val is not None else None
+        except Exception:
+            return None
+
+    async def list_ml_profiles(self, limit: int = 200) -> list:
+        # read-only visibility into what the ML worker has actually built -
+        # for /admin/ml-status. Uses SCAN, not KEYS, so this never blocks
+        # Redis regardless of keyspace size. Returns [] (not an error) if
+        # Redis is unreachable or the worker has never run - both are valid,
+        # expected states, not failures.
+        if not self.connected:
+            return []
+        profiles = []
+        try:
+            cursor = 0
+            seen = 0
+            while True:
+                cursor, keys = await self.redis_client.scan(cursor, match="profile:*", count=100)
+                for key in keys:
+                    val = await self.redis_client.get(key)
+                    if val:
+                        try:
+                            profiles.append(json.loads(val))
+                        except Exception:
+                            pass
+                    seen += 1
+                    if seen >= limit:
+                        return profiles
+                if cursor == 0:
+                    break
+        except Exception:
+            return profiles
+        return profiles
 
     # ------------------------------------------------------------------ admin
 
