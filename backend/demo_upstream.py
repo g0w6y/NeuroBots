@@ -15,14 +15,38 @@ from fastapi import FastAPI, Request
 
 app = FastAPI(title="NeuroBots Demo Upstream API")
 
-# ssn is real sample sensitive data, deliberately present so API3 (excessive
-# data exposure) response redaction is genuinely demonstrable end to end -
-# the gateway masks this field for any non-admin caller before the response
-# ever leaves it, matching backend/security_checks.py's SENSITIVE_FIELDS policy.
+# Deliberately over-serving. Every account carries fields a client has no business
+# receiving - a password hash, a national id, a full card number, an internal note.
+# This is not a strawman: it is the single most common real-world API shape, where
+# the server returns its whole row and the mobile client is trusted to display only
+# part of it. The request for your own account is perfectly authorized; the
+# response still leaks. That gap is what OWASP calls API3, and what the gateway's
+# step-8 response inspection exists to catch - no change to this file required,
+# which is the point.
+#
+# The two response-side mechanisms both feed off this data and are complementary:
+#   - security_checks.inspect_response_body enforces a per-resource policy, and
+#     actually masks `ssn` before the response leaves the gateway for a non-admin.
+#   - detect.inspect_response detects broadly - password_hash, card_number and
+#     internal_note are caught by name at any nesting depth, and raise a signal
+#     even where no redaction policy exists for them yet.
 ACCOUNTS = {
-    "1001": {"account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD", "ssn": "123-45-6789"},
-    "1002": {"account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD", "ssn": "987-65-4321"},
-    "1003": {"account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD", "ssn": "555-12-3456"},
+    "1001": {
+        "account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD",
+        "password_hash": "$2b$12$K8fj2LmN9pQrS7tUvWxYz.demo",
+        "ssn": "512-88-4417",
+        "internal_note": "flagged for manual review 2026-07-02",
+    },
+    "1002": {
+        "account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD",
+        "password_hash": "$2b$12$Zq7wE3rT5yU8iO1pA.demo",
+        "card_number": "4539-8821-0037-9915",
+    },
+    "1003": {
+        "account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD",
+        "password_hash": "$2b$12$Mn4bV6cX8zL2kJ5hG.demo",
+        "ssn": "409-22-7781",
+    },
 }
 
 TRANSACTIONS = {

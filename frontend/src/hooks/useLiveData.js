@@ -16,6 +16,11 @@ const MAX_ALERTS = 50;
 //                branch to get permanently stuck in.
 export function useLiveData() {
   const [alerts, setAlerts] = useState([]);
+  // The full fetched window, uncapped. The Overview feed only ever shows the
+  // newest MAX_ALERTS, but Logs, API Inventory and Threat Hunt all analyse the
+  // whole window - capping their input at 50 would silently narrow every
+  // aggregate they compute.
+  const [allAlerts, setAllAlerts] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [entities, setEntities] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -73,6 +78,7 @@ export function useLiveData() {
       const sortedAlerts = [...normalizedAlerts].sort((a, b) => b.ts - a.ts);
 
       setAlerts(sortedAlerts.slice(0, MAX_ALERTS));
+      setAllAlerts(sortedAlerts);
       setMetrics(deriveMetrics(raw.metrics, normalizedAlerts));
       setEntities(deriveEntities(raw.entities, normalizedAlerts));
       setIncidents(normalizeIncidents(raw.incidents));
@@ -108,5 +114,5 @@ export function useLiveData() {
     };
   }, []);
 
-  return { alerts, metrics, entities, incidents, connectionState, lastError };
+  return { alerts, allAlerts, metrics, entities, incidents, connectionState, lastError };
 }

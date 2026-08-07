@@ -16,6 +16,12 @@ class JWTResult:
         self.tenant = ""
         self.issuer = ""
         self.problem = ""
+        # RFC 7519 4.1.7 token id, and the expiry it was minted with. Both are
+        # needed for revocation: the jti is the denylist key, and the exp is how
+        # long the entry has to live. Populated even when validation ultimately
+        # fails, so an operator can revoke a token they have only seen rejected.
+        self.jti = ""
+        self.exp = 0.0
 
 def decode_base64(s: str) -> bytes:
     try:
@@ -43,6 +49,17 @@ def validate_jwt(authz: str) -> JWTResult:
 
         header_data = json.loads(decode_base64(parts[0]))
         payload_data = json.loads(decode_base64(parts[1]))
+
+        # Read before any verification branch returns. These are unverified at
+        # this point - they come from a payload whose signature has not been
+        # checked yet - so they are used ONLY as the denylist key and TTL, never
+        # as an authorization input. Revocation is checked after signature
+        # validation in main.py, so a forged token cannot reach it anyway.
+        result.jti = str(payload_data.get("jti", "") or "")
+        try:
+            result.exp = float(payload_data.get("exp") or 0)
+        except (TypeError, ValueError):
+            result.exp = 0.0
 
         alg = header_data.get("alg", "").upper()
 
@@ -144,5 +161,11 @@ def jwt_error_signal(problem: str) -> dict:
         "no_exp": {"detector": "jwt_no_expiry", "weight": 85, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT carries no exp claim - a non-expiring bearer token", "hard": True},
         "unsupported_alg": {"detector": "jwt_alg_confusion", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT signed with an algorithm this gateway does not accept", "hard": True},
         "malformed": {"detector": "jwt_malformed", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT malformed", "hard": True},
+        # A revoked token is cryptographically perfect - correct signature, not
+        # expired, right issuer and audience. That is exactly why it scores as
+        # high as a forgery: presenting one means either the credential was
+        # stolen after revocation, or the holder is replaying a session an
+        # operator has explicitly killed. Neither deserves a step-up challenge.
+        "revoked": {"detector": "jwt_revoked", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT presented after its token id was revoked", "hard": True},
     }
     return signals.get(problem, {"detector": "jwt_invalid", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT invalid", "hard": True})

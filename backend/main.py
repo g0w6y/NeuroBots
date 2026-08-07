@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from config import settings
 from auth import validate_jwt, jwt_error_signal
-from detect import Signal, check_bola, check_bfla, check_rate_limit, check_missing_token, check_enumeration, fuse_signals, risk_score, explain_decision
+from detect import Signal, check_bola, check_bfla, check_rate_limit, check_missing_token, check_enumeration, fuse_signals, risk_score, explain_decision, inspect_response
 from agents import control_plane, generate_narrative
 from store import store
 from audit_log import audit_log
@@ -362,6 +362,14 @@ DEFAULT_ROUTES = [
 
 ROUTES = list(DEFAULT_ROUTES)
 
+# Where ROUTES actually came from. Recorded explicitly rather than inferred by
+# comparing ROUTES to DEFAULT_ROUTES: a routes.json that happens to describe the
+# same five routes as the built-in table is structurally equal to it, so that
+# comparison reports "built-in defaults" for a config file that loaded perfectly.
+# This distinction matters on the API Inventory page, where it is how you tell a
+# loaded config from one that was silently rejected as malformed.
+ROUTE_SOURCE = "built-in defaults"
+
 # Any path under one of these prefixes is protected whether or not it appears in
 # ROUTES. Without this the gateway failed OPEN on every unlisted path: ROUTES
 # holds five entries, and anything else - notably POST/PUT/DELETE on
@@ -380,9 +388,10 @@ def load_route_config():
     behaviour that used to accompany it, made forgetting an endpoint a silent
     security hole rather than a config error.
     """
-    global ROUTES, PROTECTED_PREFIXES
+    global ROUTES, PROTECTED_PREFIXES, ROUTE_SOURCE
 
     if not os.path.exists(settings.route_config_file):
+        ROUTE_SOURCE = f"built-in defaults ({settings.route_config_file} not found)"
         print(f"Route config: {settings.route_config_file} not found, using {len(ROUTES)} built-in routes")
         return
 
@@ -405,6 +414,7 @@ def load_route_config():
             raise ValueError("route config contains no routes")
 
         ROUTES = parsed
+        ROUTE_SOURCE = settings.route_config_file
         prefixes = cfg.get("protected_prefixes")
         if prefixes:
             PROTECTED_PREFIXES = tuple(prefixes)
@@ -414,6 +424,7 @@ def load_route_config():
     except Exception as e:
         # Keep the built-in table rather than starting with none. A malformed
         # config must not be a way to turn authorization off.
+        ROUTE_SOURCE = f"built-in defaults ({settings.route_config_file} unusable: {e})"
         print(f"Route config: {settings.route_config_file} unusable ({e}); "
               f"keeping {len(ROUTES)} built-in routes")
 
@@ -548,8 +559,17 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object, o
     path = request.url.path
     ip = client_ip(request)
 
-    # step 2: jwt validation
+    # step 2: jwt validation + revocation
+    #
+    # Revocation is checked only AFTER the signature verified. Order matters:
+    # the jti is attacker-controlled input until the signature proves otherwise,
+    # so checking it first would let anyone probe the denylist for valid token
+    # ids, and would let a forged token with a guessed jti reach the store.
+    # A token that fails validation is already rejected on its own merits.
     jwt_result = validate_jwt(request.headers.get("Authorization", ""))
+    if jwt_result.valid and jwt_result.jti and await store.is_revoked(jwt_result.jti):
+        jwt_result.valid = False
+        jwt_result.problem = "revoked"
     subject = jwt_result.subject if jwt_result.valid else f"anon:{ip}"
     ip_key = f"ip:{ip}"
 
@@ -802,15 +822,23 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object, o
             resp = await upstream_client.send(upstream_req)
             alert["status_code"] = resp.status_code
 
-            # API3:2023 excessive data exposure - inspect the actual response
-            # body for restricted fields and redact them before the client
-            # ever sees them. Runs regardless of the request-time decision
-            # above (correctly made before this response existed) - a
-            # separate, complementary safety net on the way out, not a
-            # re-judgment of the request. Only touches the body when there's
-            # actually something to redact; content-length is already
-            # stripped from the passthrough headers (UPSTREAM_STRIP_HEADERS),
-            # so gateway() below recomputes it correctly either way.
+            # step 8: inspect response (API3:2023 excessive data exposure)
+            #
+            # Two mechanisms run here, and they answer different questions. Both
+            # are kept deliberately - neither subsumes the other:
+            #
+            #   1. Enforcement (inspect_response_body): a per-resource policy
+            #      table naming fields and the roles allowed to see them. Where a
+            #      rule exists, the field is masked in the bytes the client
+            #      actually receives. Narrow, but it genuinely prevents delivery.
+            #   2. Detection (inspect_response): no policy table required. Walks
+            #      the body for sensitive field names at any depth, cross-tenant
+            #      owner mismatches and bulk-record dumps. It cannot un-send the
+            #      data, but it is what catches the leak nobody wrote a rule for.
+            #
+            # Both run after the forward and before the event is emitted, so
+            # findings land on the same alert the request produced rather than as
+            # a second, disconnected record.
             redacted_body = None
             if resource and resp.headers.get("content-type", "").startswith("application/json"):
                 try:
@@ -818,12 +846,50 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object, o
                     roles = jwt_result.roles if jwt_result.valid else []
                     redacted, violations = inspect_response_body(resource, parsed, roles)
                     if violations:
+                        # content-length is already stripped from the passthrough
+                        # headers (UPSTREAM_STRIP_HEADERS), so gateway() below
+                        # recomputes it correctly for the rewritten body.
                         redacted_body = json.dumps(redacted).encode()
                         exposure_sig = excessive_exposure_signal(resource, violations, subject)
                         if exposure_sig:
                             alert["signals"].append(exposure_sig.to_dict())
                 except Exception:
+                    # Redaction failing must never fail a request already allowed.
                     pass
+
+            # Detection runs on the ORIGINAL upstream bytes, not the redacted
+            # copy. The audit record should say what the upstream actually
+            # served; masking a field on the way out does not mean it was never
+            # exposed to the gateway, and recording only the sanitized view would
+            # quietly under-report the upstream's real behaviour.
+            try:
+                resp_signals = inspect_response(
+                    resp.content,
+                    resp.headers.get("content-type", ""),
+                    subject,
+                    path,
+                    jwt_result.roles if jwt_result.valid else [],
+                )
+            except Exception as exc:
+                # Response inspection must never be able to fail a request that
+                # the gateway already decided to allow.
+                resp_signals = []
+                alert["explain"] += f" | response inspection skipped: {type(exc).__name__}"
+
+            if resp_signals:
+                alert["signals"] = alert.get("signals", []) + [s.to_dict() for s in resp_signals]
+                # The decision is deliberately NOT recomputed. The response has
+                # been served; re-scoring it into a block would report a block
+                # that did not happen. These are recorded so they corroborate the
+                # entity's next request, which is where they can actually act.
+                exposure = ", ".join(s.detector for s in resp_signals)
+                alert["explain"] += f" | response findings: {exposure}"
+                alert["narrative"] = (
+                    f"{alert.get('narrative', '')} Response inspection flagged {exposure}."
+                ).strip()
+                # max(), not a sum, so a field caught by both mechanisms above
+                # raises the entity's risk once rather than counting twice.
+                entity.risk_score = max(entity.risk_score, max(s.weight for s in resp_signals))
 
             emit_alert(alert)
             return action, resp.status_code, alert, resp, redacted_body
@@ -969,6 +1035,49 @@ async def get_entities():
     return result
 
 
+@app.get("/admin/routes", dependencies=[Depends(require_admin)])
+async def get_routes():
+    """The live route table, for the API Inventory page.
+
+    Serves what the gateway is *actually* enforcing - ROUTES as loaded at
+    startup - rather than re-reading routes.json. If the file was malformed at
+    boot the gateway kept its built-in table, and an inventory page that showed
+    the file would then describe rules that are not in force. `source` says
+    which one you are looking at.
+    """
+    return {
+        "protected_prefixes": list(PROTECTED_PREFIXES),
+        "source": ROUTE_SOURCE,
+        "routes": [
+            {
+                "method": method,
+                "pattern": "/" + "/".join(segments),
+                "resource": meta.get("resource", ""),
+                "object_param": meta.get("object_param", ""),
+                "required_roles": meta.get("required_roles", []),
+                "require_auth": meta.get("require_auth", True),
+                # what protection this entry actually buys, spelled out - the
+                # distinction between "authenticated" and "authorized" is the
+                # entire point of the inventory
+                "bola_protected": bool(meta.get("object_param")),
+                "bfla_protected": bool(meta.get("required_roles")),
+            }
+            for method, segments, meta in ROUTES
+        ],
+    }
+
+
+@app.get("/admin/ownership", dependencies=[Depends(require_admin)])
+async def list_ownership():
+    """Every ownership grant in force - the data BOLA decisions are made against."""
+    grants = await store.list_ownership()
+    return {
+        "count": len(grants),
+        "source": "redis+memory" if store.connected else "memory",
+        "grants": grants,
+    }
+
+
 @app.post("/admin/ownership", dependencies=[Depends(require_admin)])
 async def provision_ownership(payload: dict):
     resource = payload.get("resource", "")
@@ -978,6 +1087,38 @@ async def provision_ownership(payload: dict):
         raise HTTPException(status_code=400, detail="resource, object_id, subject are required")
     await store.grant_ownership(resource, object_id, subject)
     return {"status": "granted", "resource": resource, "object_id": object_id, "subject": subject}
+
+
+@app.get("/admin/revocations", dependencies=[Depends(require_admin)])
+async def list_revocations():
+    """Token ids currently on the denylist. Entries self-expire at token expiry."""
+    revoked = await store.list_revoked()
+    return {
+        "count": len(revoked),
+        "source": "redis+memory" if store.connected else "memory",
+        "revocations": revoked,
+    }
+
+
+@app.post("/admin/revoke", dependencies=[Depends(require_admin)])
+async def revoke(payload: dict):
+    """Revoke a token by its `jti`, killing that session on the next request.
+
+    Takes `jti` (required) and optionally `exp` (unix seconds) and `reason`.
+    Without `exp` the entry falls back to a 24h TTL — supply it whenever you
+    have it so the denylist stays exactly as long as the token it kills.
+    """
+    jti = str(payload.get("jti", "") or "").strip()
+    if not jti:
+        raise HTTPException(status_code=400, detail="jti is required")
+    try:
+        exp = float(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="exp must be a unix timestamp")
+
+    record = await store.revoke_token(jti, exp, str(payload.get("reason", "") or "manual revocation"))
+    event_hub.publish("revocation", {"time": utc_iso(), **record})
+    return {"status": "revoked", **record}
 
 
 @app.get("/admin/ml-status", dependencies=[Depends(require_admin)])
