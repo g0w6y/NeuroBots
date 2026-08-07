@@ -65,6 +65,23 @@ class Settings(BaseSettings):
     tls_certfile: str = "certs/gateway.crt"
     tls_keyfile: str = "certs/gateway.key"
 
+    # Horizontal scaling: 1 (default) keeps the simple single-process path
+    # uvicorn.run(app, ...) already used. >1 requires passing the app as an
+    # import string instead of an object - uvicorn's multiprocess workers
+    # each import and start their own copy, which an already-instantiated
+    # object can't be handed to. Only safe with Redis reachable: BOLA
+    # ownership, rate-limit windows, and escalation state all live there
+    # specifically so independent worker processes don't silently diverge.
+    # Without Redis, each worker keeps its own in-memory fallback state and
+    # WILL diverge - verified 2026-08-08, see backend/MEMORY.md.
+    workers: int = 1
+
+    # Production fail-closed gate (see main.py's startup check): when true,
+    # the gateway refuses to start with any default secret still in place,
+    # rather than silently running with demo-mode credentials in a
+    # deployment that claims to be production.
+    require_production_secrets: bool = False
+
     class Config:
         env_file = ".env"
 

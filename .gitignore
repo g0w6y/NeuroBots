@@ -7,3 +7,4 @@ node_modules/
 dist/
 .demo-logs/
 .demo-pids
+backend/certs/
