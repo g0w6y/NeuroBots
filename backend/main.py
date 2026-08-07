@@ -471,6 +471,25 @@ async def provision_ownership(payload: dict):
     return {"status": "granted", "resource": resource, "object_id": object_id, "subject": subject}
 
 
+@app.get("/admin/ml-status", dependencies=[Depends(require_admin)])
+async def ml_status():
+    # read-only visibility into the ML worker (ml/worker.py) - a genuinely
+    # separate process, this gateway never runs any model itself. Everything
+    # here comes from what that process actually wrote to the shared Redis;
+    # nothing is computed or guessed here. An empty list is a true, expected
+    # state (worker never run, or Redis unreachable), not an error.
+    profiles = await store.list_ml_profiles()
+    trained = [p for p in profiles if p.get("has_model")]
+    attackers = [p for p in profiles if p.get("known_attacker")]
+    return {
+        "worker_reachable": store.connected and len(profiles) > 0,
+        "profiled_entities": len(profiles),
+        "trained_models": len(trained),
+        "known_attackers_excluded_from_training": len(attackers),
+        "profiles": profiles
+    }
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def gateway(request: Request):
     action, status_code, alert, resp = await check_and_forward(request)
