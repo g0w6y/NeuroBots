@@ -8,10 +8,17 @@ Fast, deterministic detection of BOLA, BFLA, JWT attacks, and rate abuse.
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python main.py
+
+python demo_upstream.py &   # sample protected API on :9000 - what "allow" decisions forward to
+python main.py               # gateway on :8080
 ```
 
-Gateway runs on 0.0.0.0:8080
+Without `demo_upstream.py` running, every allowed request will correctly get forwarded
+and then 502 — the gateway isn't broken, there's just nothing listening at
+`UPSTREAM_URL` to receive the forward. `demo_upstream.py` is real working sample data
+(a few in-memory accounts), not a mock of the gateway's own logic — the gateway's
+decisions are identical whether or not it's running; it only affects what a legitimate,
+allowed request actually gets back.
 
 ## Core Features
 

@@ -6,6 +6,25 @@ Status doc for team continuity. Last updated 2026-08-07. Read this before making
 
 A gateway that sits in front of an API and blocks authorization attacks in real time: BOLA, BFLA, JWT tampering, rate abuse. Two-plane design — fast deterministic checks inline (data plane), async behavioral anomaly detection in the background (control plane / multi-agent layer), plus an autonomous escalation layer that remembers proven attackers across requests instead of re-deciding from scratch every time.
 
+## Frontend connection + demo upstream (new)
+
+Connected to the real dashboard (neurobots-frontend / NeuroBots repo's frontend/) this
+session, not just built alongside it. Found and fixed three real bugs that only show up
+when something outside this process actually consumes the responses: no CORS (browsers
+can't call a cross-origin API without it), a naive-timestamp bug (datetime.utcnow().isoformat()
+has no timezone marker, so a browser's `new Date(...)` reads it as local time - verified
+5.5 hours off in IST, silently broke the dashboard's timeseries chart), and the frontend
+was defaulting to a port that hasn't existed since an earlier cleanup. All fixed, verified
+against real captured traffic through the real running app, not assumed.
+
+Also added `demo_upstream.py` - a small, real, working sample API (in-memory accounts,
+transactions, transfers, users) for the gateway to forward "allow" decisions to. Before
+this, every legitimate request correctly got forwarded and then 502'd, because nothing
+was listening at UPSTREAM_URL. The gateway's decisions were never fake - there was just
+nothing real behind it to complete the round trip, which looks broken in a demo even
+though it's correct. Not part of detection logic at all; skipping it changes nothing
+about what the gateway blocks or allows, only what a legitimate request gets back.
+
 ## Reference design this follows
 
 An artifact defined the canonical 9-step flow and the multi-agent layer. Ground truth, not guessed:
