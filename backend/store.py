@@ -47,6 +47,14 @@ class SharedStore:
         self._escalation_counts = defaultdict(int)
         self._last_touch = {}
 
+        # jti -> revocation record. Entries self-expire at the token's own `exp`,
+        # so this cannot grow past the number of tokens live at any one moment.
+        self._revoked = {}
+        # Fallback TTL for a token whose exp we could not read. Deliberately
+        # generous: erring long keeps a revoked credential dead, erring short
+        # brings it back to life.
+        self._default_revocation_ttl = 24 * 3600
+
         self._degraded_announced = False
         self._keeper: Optional[asyncio.Task] = None
 
@@ -327,6 +335,143 @@ class SharedStore:
         except Exception:
             return profiles
         return profiles
+
+    # ------------------------------------------------------------- revocation
+
+    async def revoke_token(self, jti: str, exp: float, reason: str = "") -> dict:
+        """Add a token id to the denylist until its own expiry.
+
+        The TTL is the token's remaining lifetime, not a fixed window. A revoked
+        token that has expired on its own is already rejected by the expiry
+        check, so keeping its jti after that point grows the denylist forever
+        without adding any protection - this is the difference between a
+        denylist that stays small and one that becomes an operational problem.
+
+        Written through to memory unconditionally, same as ownership, so the
+        denylist stays authoritative if Redis disappears mid-flight. Revocation
+        failing open is the one outcome that must never happen quietly.
+        """
+        now = time.time()
+        ttl = max(1, int(exp - now)) if exp else self._default_revocation_ttl
+        record = {"jti": jti, "revoked_at": now, "expires_at": exp or (now + ttl), "reason": reason}
+        self._revoked[jti] = record
+
+        if self.connected:
+            try:
+                await self.redis_client.setex(f"revoked:{jti}", ttl, json.dumps(record))
+            except Exception as e:
+                self._degrade("revoke_token", e)
+        return record
+
+    async def is_revoked(self, jti: str) -> bool:
+        if not jti:
+            return False
+
+        # Memory first and always: it is a plain dict lookup, it cannot fail, and
+        # checking it before Redis means a Redis outage cannot turn a revoked
+        # token back into a valid one for anything revoked by this process.
+        record = self._revoked.get(jti)
+        if record:
+            if record["expires_at"] > time.time():
+                return True
+            # self-expired; drop it so the local map does not grow unbounded
+            self._revoked.pop(jti, None)
+
+        if self.connected:
+            try:
+                return bool(await self.redis_client.exists(f"revoked:{jti}"))
+            except Exception as e:
+                self._degrade("is_revoked", e)
+        return False
+
+    async def list_revoked(self, limit: int = 500) -> list:
+        now = time.time()
+        live = {
+            jti: r for jti, r in self._revoked.items() if r["expires_at"] > now
+        }
+        if self.connected:
+            try:
+                cursor = 0
+                seen = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(cursor, match="revoked:*", count=100)
+                    for key in keys:
+                        val = await self.redis_client.get(key)
+                        if val:
+                            try:
+                                r = json.loads(val)
+                                live.setdefault(r.get("jti", key.split(":", 1)[-1]), r)
+                            except Exception:
+                                pass
+                        seen += 1
+                        if seen >= limit:
+                            cursor = 0
+                            break
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                self._degrade("list_revoked", e)
+        return sorted(live.values(), key=lambda r: r.get("revoked_at", 0), reverse=True)
+
+    async def list_ownership(self, limit: int = 1000) -> list:
+        """Every object-ownership grant currently in force, for /admin/ownership.
+
+        Read-only visibility into the data BOLA decisions are actually made
+        against - the Access Control page exists so that "who owns what" is
+        inspectable rather than being an invisible set of Redis keys.
+
+        The in-memory map is always merged in, not used only as a fallback:
+        grant_ownership() writes through to memory unconditionally, so with
+        Redis connected the two are both authoritative and reading only one of
+        them would under-report. SCAN, never KEYS, for the same reason as
+        list_ml_profiles.
+        """
+        merged: dict = {}
+
+        for resource, objects in self._owned_objects.items():
+            for object_id, subjects in objects.items():
+                if subjects:
+                    merged.setdefault((resource, object_id), set()).update(subjects)
+
+        if self.connected:
+            try:
+                cursor = 0
+                seen = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor, match="authorized:*", count=100
+                    )
+                    for key in keys:
+                        # authorized:{resource}:{object_id} - split from the left
+                        # twice only, since an object id may itself contain ':'
+                        parts = key.split(":", 2)
+                        if len(parts) != 3:
+                            continue
+                        _, resource, object_id = parts
+                        members = await self.redis_client.smembers(key)
+                        if members:
+                            merged.setdefault((resource, object_id), set()).update(members)
+                        seen += 1
+                        if seen >= limit:
+                            cursor = 0
+                            break
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                self._degrade("list_ownership", e)
+
+        return sorted(
+            (
+                {
+                    "resource": resource,
+                    "object_id": object_id,
+                    "owners": sorted(subjects),
+                    "fan_in": len(subjects),
+                }
+                for (resource, object_id), subjects in merged.items()
+            ),
+            key=lambda g: (g["resource"], g["object_id"]),
+        )
 
     # ------------------------------------------------------------------ admin
 

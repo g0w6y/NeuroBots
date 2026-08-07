@@ -6,6 +6,7 @@
 //
 //   node contract-check.mjs
 import { normalizeAlerts, deriveMetrics, deriveEntities, normalizeIncidents } from './src/api/normalize.js';
+import { buildInventory, runHunts, HUNTS, patternToRegex } from './src/api/analysis.js';
 
 const GW = process.env.VITE_GATEWAY_URL || 'http://127.0.0.1:8080';
 const KEY = process.env.VITE_ADMIN_KEY || 'changeme-admin-key';
@@ -96,6 +97,100 @@ check('table sorts by risk descending',
 // --- incidents ---
 check('incidents normalize cleanly',
   incidents.every(i => i.id && i.target && i.reason), `${incidents.length} incidents`);
+
+// --- API Inventory (/admin/routes + the observed-path join) ---
+const rawRoutes = await get('/admin/routes');
+const inventory = buildInventory(rawRoutes, alerts);
+
+check('route table is served and non-empty',
+  inventory && inventory.routes.length > 0, `${inventory?.routes.length ?? 0} routes`);
+check('route source names the file, not the built-in fallback',
+  rawRoutes.source && !rawRoutes.source.startsWith('built-in'),
+  `source = ${rawRoutes.source}`);
+check('every route carries the fields the inventory table renders',
+  inventory.routes.every(r => ['method', 'pattern', 'resource', 'required_roles',
+    'bola_protected', 'bfla_protected', 'traffic', 'blocked'].every(k => r[k] !== undefined)));
+check('object-scoped routes are flagged bola_protected',
+  inventory.routes.every(r => Boolean(r.object_param) === r.bola_protected));
+check('role-gated routes are flagged bfla_protected',
+  inventory.routes.every(r => (r.required_roles.length > 0) === r.bfla_protected));
+// Parameterised patterns are the ones a naive escape order silently breaks, so
+// assert the join actually matched traffic rather than trusting it compiled.
+const parameterised = inventory.routes.filter(r => r.pattern.includes('{'));
+check('parameterised patterns match real observed paths',
+  parameterised.length === 0 || parameterised.some(r => r.traffic > 0),
+  parameterised.map(r => `${r.pattern}=${r.traffic}`).join(' '));
+check('patternToRegex substitutes placeholders',
+  patternToRegex('/api/accounts/{id}').test('/api/accounts/1001')
+  && !patternToRegex('/api/accounts/{id}').test('/api/accounts/1001/transactions'));
+check('every unlisted path really is under a protected prefix',
+  inventory.unlisted.every(u => inventory.prefixes.some(p => u.path.startsWith(`/${p}/`) || u.path === `/${p}`)),
+  `${inventory.unlisted.length} gaps`);
+check('total route traffic does not exceed the alert window',
+  inventory.routes.reduce((s, r) => s + r.traffic, 0) <= alerts.length,
+  `${inventory.routes.reduce((s, r) => s + r.traffic, 0)} matched / ${alerts.length} alerts`);
+
+// --- Access Control (/admin/ownership) ---
+const rawOwnership = await get('/admin/ownership');
+check('ownership grants are served with the fields the table renders',
+  Array.isArray(rawOwnership.grants)
+  && rawOwnership.grants.every(g => g.resource && g.object_id && Array.isArray(g.owners)),
+  `${rawOwnership.count} grants from ${rawOwnership.source}`);
+check('fan_in equals the owner count it is derived from',
+  rawOwnership.grants.every(g => g.fan_in === g.owners.length));
+check('seeded ownership is present',
+  rawOwnership.grants.length > 0,
+  rawOwnership.grants.map(g => `${g.resource}/${g.object_id}`).join(' '));
+
+// --- Revocation (flow step 1) ---
+const rawRevocations = await get('/admin/revocations');
+check('revocation denylist is served',
+  Array.isArray(rawRevocations.revocations) && typeof rawRevocations.count === 'number',
+  `${rawRevocations.count} revoked, source ${rawRevocations.source}`);
+check('every revocation carries the fields the table renders',
+  rawRevocations.revocations.every(r => r.jti && r.revoked_at && r.expires_at));
+check('no revocation outlives the token it killed',
+  rawRevocations.revocations.every(r => r.expires_at >= r.revoked_at));
+
+// --- Threat Hunt (derived, no endpoint of its own) ---
+const hunts = runHunts(alerts);
+check('every hunt returns a result set', HUNTS.every(h => Array.isArray(hunts[h.id])));
+check('hunt rows carry every column the table renders',
+  Object.values(hunts).flat().every(r => ['subject', 'count', 'blocked', 'peakRisk',
+    'paths', 'ips', 'techniques'].every(k => r[k] !== undefined)));
+check('hunts never report more events than exist',
+  Object.values(hunts).flat().every(r => r.count <= alerts.length));
+check('repeat-offenders honours its minEvents floor',
+  hunts.repeat.every(r => r.count >= 3), `${hunts.repeat.length} subjects`);
+check('hunt timestamps are ordered first <= last',
+  Object.values(hunts).flat().every(r => !r.first || !r.last || r.first <= r.last));
+// With attack traffic in the window at least one hunt must fire - if every hunt
+// is empty while blocks exist, the signal-name predicates have drifted from
+// whatever the gateway now emits, and this page would silently show nothing.
+const blockedCount = alerts.filter(a => a.decision === 'block').length;
+check('hunts detect something when attacks are present',
+  blockedCount === 0 || Object.values(hunts).some(rows => rows.length > 0),
+  Object.entries(hunts).map(([k, v]) => `${k}=${v.length}`).join(' '));
+
+// --- API3 response inspection (flow step 8) ---
+// The signal rides on requests the gateway ALLOWED, so assert exactly that: a
+// finding attached to a non-allowed decision would mean the response was never
+// actually served and the finding is fiction.
+const exposureAlerts = alerts.filter(a =>
+  a.signals?.some(s => s.signal?.includes('data_exposure')));
+check('API3 findings only ever attach to served responses',
+  exposureAlerts.every(a => a.decision === 'allow' || a.decision === 'observe'),
+  `${exposureAlerts.length} findings, decisions: ${[...new Set(exposureAlerts.map(a => a.decision))].join(',') || 'none'}`);
+check('API3 findings are mapped to OWASP API3 and a MITRE technique',
+  exposureAlerts.every(a => a.signals.filter(s => s.signal?.includes('data_exposure'))
+    .every(s => s.owasp === 'API3' && s.mitre)),
+  exposureAlerts[0]
+    ? JSON.stringify(exposureAlerts[0].signals.find(s => s.signal?.includes('data_exposure')))
+    : 'no findings yet');
+check('API3 findings are soft, never hard',
+  exposureAlerts.every(a => a.signals.filter(s => s.signal?.includes('data_exposure'))
+    .every(s => s.hard === false)),
+  'a response-side finding must not block a response already served');
 
 console.log(`\n${pass}/${pass + fail} contract checks passed`);
 process.exit(fail ? 1 : 0);
