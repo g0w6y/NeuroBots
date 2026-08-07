@@ -83,10 +83,15 @@ class MLWorker:
             print(f"ML worker: gateway unreachable ({e})")
             return []
 
-        if not self.last_processed_time:
-            self.last_processed_time = alerts[-1]["time"] if alerts else ""
-            return []
-
+        # Process everything visible on the very first poll, don't discard it
+        # as "old history". A prior design skipped whatever was already in
+        # /admin/alerts at startup, meant to avoid reprocessing a stale
+        # previous session on restart - but /admin/alerts is already a bounded
+        # recent window (not unbounded history), and in the much more common
+        # case - this worker starting fresh alongside a fresh gateway - that
+        # behavior silently discarded the demo's own opening traffic if it
+        # landed before this first poll completed. Losing real events on
+        # startup is worse than occasionally reprocessing a few.
         new_alerts = [a for a in alerts if a.get("time", "") > self.last_processed_time]
         if new_alerts:
             self.last_processed_time = max(a["time"] for a in new_alerts)
@@ -119,8 +124,30 @@ class MLWorker:
         profile.maybe_retrain()
 
     async def score_and_publish(self, subject: str, now: float) -> None:
+        # Two separate concerns, deliberately not gated by the same condition:
+        # - profile:{subject} is written for ANY tracked entity, even with just
+        #   1 sample - pure visibility/debugging (/admin/ml-status), proving
+        #   the worker is alive and actually watching traffic. Does not affect
+        #   detection.
+        # - ml_risk:{subject} - the actual signal the gateway reads and can act
+        #   on - is only written once min_samples_to_score is crossed. A model
+        #   trained on a handful of samples is noise, not signal; publishing it
+        #   as a real risk score would feed exactly the kind of premature,
+        #   under-informed anomaly claim the rest of this project has
+        #   deliberately guarded against everywhere else.
         profile = self.profiles.get(subject)
-        if not profile or len(profile.requests) < settings.min_samples_to_score:
+        if not profile or not profile.requests:
+            return
+
+        has_enough_data = len(profile.requests) >= settings.min_samples_to_score
+        profile_payload = {**profile.to_dict(), "updated_at": datetime.now(timezone.utc).isoformat() + "Z"}
+
+        if not has_enough_data:
+            if self.redis_client:
+                try:
+                    await self.redis_client.setex(f"profile:{subject}", settings.profile_ttl_sec, json.dumps(profile_payload))
+                except Exception as e:
+                    print(f"ML worker: Redis write failed for {subject} ({e})")
             return
 
         last = profile.requests[-1]
@@ -129,21 +156,12 @@ class MLWorker:
         novelty = self.graph.novelty_score(subject, last["resource"], last["object_id"], now)
 
         ml_risk, breakdown = compute_ml_risk(isolation, markov, novelty)
-
-        payload = {
-            "ml_risk": ml_risk,
-            "breakdown": breakdown,
-            "sample_count": len(profile.requests),
-            "updated_at": datetime.now(timezone.utc).isoformat() + "Z",
-        }
+        profile_payload.update({"ml_risk": ml_risk, "breakdown": breakdown})
 
         if self.redis_client:
             try:
                 await self.redis_client.setex(f"ml_risk:{subject}", settings.ml_risk_ttl_sec, str(ml_risk))
-                await self.redis_client.setex(
-                    f"profile:{subject}", settings.profile_ttl_sec,
-                    json.dumps({**profile.to_dict(), **payload})
-                )
+                await self.redis_client.setex(f"profile:{subject}", settings.profile_ttl_sec, json.dumps(profile_payload))
             except Exception as e:
                 print(f"ML worker: Redis write failed for {subject} ({e})")
 

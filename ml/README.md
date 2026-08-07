@@ -50,8 +50,13 @@ this only ever adds a signal, it's never a dependency of the request path.
    object's fan-in (a shared/public object is far less suspicious to touch for the
    first time than a private one with one owner).
 6. **Fusion** (`risk.py`): `ml_risk = 100 * (0.4*isolation + 0.3*sequence + 0.3*graph)`,
-   exactly the weights in `ML.md`. Written to Redis as `ml_risk:{subject}` (5 min TTL)
-   and a fuller `profile:{subject}` for debugging/inspection.
+   exactly the weights in `ML.md`. Two separate writes, deliberately not gated the
+   same way: `profile:{subject}` is written for *any* tracked entity, even with just
+   1 sample — pure visibility (`GET /admin/ml-status` on the gateway), proving the
+   worker is alive and watching traffic without waiting for enough data to matter.
+   `ml_risk:{subject}` — the actual signal the gateway acts on — is only written
+   once `ML_MIN_SAMPLES` is crossed; a model trained on a handful of samples is
+   noise, not signal, and shouldn't be treated as a real anomaly claim.
 7. **Anti-poisoning**: a `block` decision marks that entity `known_attacker` and is
    never folded into its training data — not that one request, and not any later
    "allowed" request from the same identity either, since a proven attacker's
@@ -63,13 +68,32 @@ this only ever adds a signal, it's never a dependency of the request path.
 
 Every claim above was checked against a real running stack, not unit-tested in
 isolation: a real gateway, a real disposable Redis (Docker), and this worker as an
-actual separate OS process talking to both. Confirmed: the worker correctly ignores
-its own startup backlog (only processes events after it begins polling); a genuine
-BOLA attack produces zero training data and zero graph edges for the attacker;
-legitimate traffic produces a real IsolationForest score, a real graph, and gets
+actual separate OS process talking to both. Confirmed: a genuine BOLA attack
+produces zero training data and zero graph edges for the attacker; legitimate
+traffic produces a real IsolationForest score, a real graph, and gets
 written to Redis; the gateway correctly reads a real `ml_risk` value back and adds
 `ml_anomaly` as a signal (confirmed via a manually-seeded high score triggering a
 real challenge decision end to end).
+
+## Two more real bugs found while testing the full startup flow
+
+1. **First-poll data loss.** The original design skipped whatever was already in
+   `/admin/alerts` on the worker's very first poll, meant to avoid reprocessing a
+   stale previous session's history on restart. In the much more common case — this
+   worker starting fresh alongside a fresh gateway, exactly the demo scenario — it
+   silently discarded the opening traffic if it landed before that first poll
+   completed. Confirmed with a real test: sent traffic immediately after startup, 0
+   events processed. Fixed: the worker now processes everything visible on its first
+   poll. `/admin/alerts` is already a bounded recent window, not unbounded history,
+   so the "avoid reprocessing a huge backlog" concern doesn't really apply — losing
+   real events on startup was worse than occasionally reprocessing a few.
+2. **`pgrep` pattern bug in `start_all.sh`**, not in this worker's own code, but
+   found while testing this worker end to end as part of the startup script: on
+   macOS, the Python interpreter's actual path (`Python.app/.../Python`) doesn't
+   contain the literal string "python3", so `pgrep -f "python3 <script>"` silently
+   matches nothing. `stop_all.sh` would have done nothing at all. Fixed by matching
+   on the script filename alone, verified against real `ps aux` output before
+   trusting the pattern a second time.
 
 ## A real calibration caveat, found by that same testing
 

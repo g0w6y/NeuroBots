@@ -10,9 +10,23 @@ backend/    FastAPI gateway - JWT validation, BOLA/BFLA detection, rate limiting
 ml/         Real ML worker - per-entity IsolationForest, Markov sequence model,
             NetworkX access graph (scikit-learn/networkx, not a rename of backend/)
 frontend/   React/Vite dashboard - reads real gateway state, no simulated data
+start_all.sh / stop_all.sh   one-command demo startup/shutdown, with real health
+                              checks between each step - see below
 ```
 
-## Run it end to end
+## Fastest way to run it: one command
+
+```bash
+REDIS_URL=redis://127.0.0.1:6379 ./start_all.sh    # demo upstream + gateway + ML worker
+cd frontend && npm run dev                          # dashboard, in its own terminal
+./stop_all.sh                                        # when done
+```
+
+`REDIS_URL` is optional — omit it and everything still works, just without the ML
+worker's signal (the gateway falls back to in-memory state either way). Logs for
+each service land in `.demo-logs/` if something needs checking.
+
+## Run it end to end, manually (what the script above actually automates)
 
 ```bash
 # terminal 1 - sample protected API (real working demo data, not a mock of the gateway)

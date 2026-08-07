@@ -1,4 +1,5 @@
 import time
+import json
 import itertools
 from collections import defaultdict, deque
 from typing import Optional
@@ -165,6 +166,36 @@ class SharedStore:
             return int(val) if val is not None else None
         except Exception:
             return None
+
+    async def list_ml_profiles(self, limit: int = 200) -> list:
+        # read-only visibility into what the ML worker has actually built -
+        # for /admin/ml-status. Uses SCAN, not KEYS, so this never blocks
+        # Redis regardless of keyspace size. Returns [] (not an error) if
+        # Redis is unreachable or the worker has never run - both are valid,
+        # expected states, not failures.
+        if not self.connected:
+            return []
+        profiles = []
+        try:
+            cursor = 0
+            seen = 0
+            while True:
+                cursor, keys = await self.redis_client.scan(cursor, match="profile:*", count=100)
+                for key in keys:
+                    val = await self.redis_client.get(key)
+                    if val:
+                        try:
+                            profiles.append(json.loads(val))
+                        except Exception:
+                            pass
+                    seen += 1
+                    if seen >= limit:
+                        return profiles
+                if cursor == 0:
+                    break
+        except Exception:
+            return profiles
+        return profiles
 
 
 store = SharedStore()
