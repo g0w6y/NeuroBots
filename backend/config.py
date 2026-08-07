@@ -1,0 +1,50 @@
+from pydantic_settings import BaseSettings
+from typing import List
+
+class Settings(BaseSettings):
+    listen_addr: str = "0.0.0.0"
+    listen_port: int = 8080
+    upstream_url: str = "http://127.0.0.1:9000"
+
+    jwt_secret: str = "demo-hs256-secret-change-me"
+    jwt_rsa_pub_pem: str = ""
+    issuer: str = "zt-idp"
+    audience: str = "zt-api"
+
+    redis_url: str = "redis://127.0.0.1:6379"
+    database_url: str = "postgresql://user:password@localhost/neurobots"
+
+    admin_api_key: str = "changeme-admin-key"
+
+    learning_window_sec: int = 8
+    block_threshold: int = 70
+    challenge_threshold: int = 45
+    enum_threshold: int = 8
+    enum_window_sec: int = 10
+    rate_limit_requests: int = 120
+    rate_limit_window_sec: int = 60
+    rate_limit_burst_requests: int = 25
+    rate_limit_burst_sec: int = 3
+
+    auto_block_threshold: int = 3
+    auto_block_window_sec: int = 60
+    auto_block_cooldown_sec: int = 300
+    auto_block_max_multiplier: int = 4
+
+    auto_block_ip_threshold: int = 10
+
+    bola_strict_mode: bool = False
+    ownership_seed_file: str = "seed_ownership.json"
+
+    # demo-mode default: permissive so the frontend can connect from any dev host/port
+    # (varies by laptop, LAN IP, Vite port) without per-machine config during the
+    # hackathon. The actual access boundary on every /admin/* route is the X-Admin-Key
+    # header, not CORS - a page from an unlisted origin still can't read protected data
+    # without knowing the key. Tighten this to a fixed origin list before any real
+    # deployment beyond the demo.
+    cors_allowed_origins: str = "*"
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()

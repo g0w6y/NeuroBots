@@ -2,6 +2,42 @@
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection Platform
 
+## Repository layout
+
+```
+backend/    FastAPI gateway - JWT validation, BOLA/BFLA detection, rate limiting,
+            multi-agent anomaly detection, autonomous escalation, audit log
+frontend/   React/Vite dashboard - reads real gateway state, no simulated data
+```
+
+## Run it end to end
+
+```bash
+# terminal 1 - gateway
+cd backend
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python main.py                       # listens on 0.0.0.0:8080
+
+# terminal 2 - dashboard
+cd frontend
+npm install
+cp .env.example .env                 # VITE_GATEWAY_URL / VITE_ADMIN_KEY must match the gateway
+npm run dev                          # http://localhost:5173
+```
+
+Redis and PostgreSQL are optional — the gateway falls back to in-memory state for
+both when they're unreachable (rate limits, BOLA ownership, and the audit log all
+work either way; only cross-restart persistence and multi-instance sharing need
+the real services). CORS defaults to permissive for local demo convenience — the
+actual access boundary on every `/admin/*` route is the `X-Admin-Key` header, not
+CORS; lock `CORS_ALLOWED_ORIGINS` down before any real deployment.
+
+See `backend/README.md` and `backend/MEMORY.md` for the gateway's full status,
+every bug found and fixed with why it mattered, and what's genuinely still open.
+See `frontend/README.md` for what the dashboard shows and how it derives display
+metrics from the gateway's real responses.
+
 ## Problem Statement Understanding..
 
 
