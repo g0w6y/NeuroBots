@@ -47,17 +47,23 @@ def check_bola(subject: str, resource: str, object_id: str, is_owner: bool, fan_
             )
         return None
 
-    if fan_in <= 5:
-        return Signal(
-            "bola_cross_user",
-            80,
-            "API1:2023 Broken Object Level Authorization",
-            "T1078 Valid Accounts",
-            f"{subject} accessed {resource}/{object_id} not owned by them (fan-in={fan_in})",
-            hard=True
-        )
-
-    return None
+    # The object has a known owner set and this subject is not in it. That is a
+    # BOLA violation regardless of how many owners the object has.
+    #
+    # This was previously gated on `fan_in <= 5`, which meant any object with six
+    # or more provisioned owners - a shared team account, a joint account, a
+    # family plan - silently became a permanent BOLA blind spot for everyone on
+    # earth, and the accessor was then granted ownership of it. The gate had no
+    # comment explaining it and no threshold can justify it: "several people own
+    # this" is not evidence that a stranger may read it.
+    return Signal(
+        "bola_cross_user",
+        80,
+        "API1:2023 Broken Object Level Authorization",
+        "T1078 Valid Accounts",
+        f"{subject} accessed {resource}/{object_id} not owned by them (fan-in={fan_in})",
+        hard=True
+    )
 
 def check_bfla(subject_roles: List[str], required_roles: List[str]) -> Optional[Signal]:
     if not required_roles:
@@ -112,21 +118,44 @@ def check_enumeration(distinct_count: int, threshold: int = 8) -> Optional[Signa
         )
     return None
 
+def risk_score(signals: List[Signal]) -> int:
+    """Fuse signal weights into a single 0-100 risk score.
+
+    BACKEND.md Part 6 specifies max-with-cap-100. Straight summation (the
+    previous behaviour) let two individually-unremarkable signals add their way
+    past the block threshold, which manufactures exactly the false positive this
+    gateway is measured on. Corroboration is still worth something - two
+    independent detectors agreeing is stronger evidence than one - so each
+    additional signal adds a small fixed bump rather than its full weight.
+    """
+    if not signals:
+        return 0
+    top = max(s.weight for s in signals)
+    return min(100, top + 5 * (len(signals) - 1))
+
+
 def fuse_signals(signals: List[Signal], threshold_block: int = 70, threshold_challenge: int = 45) -> str:
     if not signals:
         return "allow"
 
-    has_hard = any(s.hard for s in signals)
-    score = sum(s.weight for s in signals)
-    score = min(score, 100)
+    score = risk_score(signals)
 
-    if has_hard:
+    # A "hard" signal is a determination of fact - a signature that does not
+    # verify, an object the subject demonstrably does not own - rather than a
+    # heuristic guess, so it is always acted on rather than merely observed.
+    # But *how* firmly to act is still the score's call. An expired token is a
+    # hard fact at weight 60, and the correct response there is to make the user
+    # re-authenticate, not to slam the door on a paying customer whose session
+    # aged out thirty seconds ago. Treating every hard signal as an automatic
+    # block made the "challenge" decision unreachable in practice - the policy
+    # engine advertised three outcomes and could only ever produce two - and
+    # turned routine token expiry into an outage.
+    hard_score = max((s.weight for s in signals if s.hard), default=0)
+
+    if score >= threshold_block or hard_score >= threshold_block:
         return "block"
 
-    if score >= threshold_block and len(signals) >= 2:
-        return "block"
-
-    if score >= threshold_challenge:
+    if score >= threshold_challenge or hard_score > 0:
         return "challenge"
 
     if score > 0:

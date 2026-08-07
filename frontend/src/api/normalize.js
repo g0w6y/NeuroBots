@@ -24,8 +24,15 @@ function shortCode(label) {
 
 export function normalizeAlert(raw) {
   return {
-    id: `${raw.time}_${raw.subject}_${raw.path}`,
+    // the gateway now assigns every alert a monotonic id; the composite key is
+    // only a fallback for an older gateway build (two requests by one subject to
+    // one path inside the same microsecond would collide there, which a burst
+    // attack reliably produces)
+    id: raw.id ?? `${raw.time}_${raw.subject}_${raw.path}`,
     timestamp: raw.time,
+    // parse once here rather than re-parsing this string in the sort comparator
+    // and again inside every timeseries bucket on every 2s poll
+    ts: Date.parse(raw.time),
     subject: raw.subject,
     ip: raw.ip,
     method: raw.method,
@@ -34,8 +41,13 @@ export function normalizeAlert(raw) {
     risk_score: raw.risk,
     signals: (raw.signals || []).map((s) => ({
       signal: s.detector,
+      // short codes for the inline pills, full labels for the expanded detail —
+      // "API1 · T1078" scans at a glance, but a judge reading the reasoning wants
+      // "Broken Object Level Authorization", not an acronym
       owasp: shortCode(s.owasp),
       mitre: shortCode(s.mitre),
+      owaspFull: s.owasp,
+      mitreFull: s.mitre,
       evidence: s.evidence,
       hard: s.hard
     })),
@@ -56,25 +68,46 @@ function percentile(sorted, p) {
   return sorted[idx];
 }
 
-// input: normalized alerts array
+// 24 buckets of 5 seconds = the last two minutes.
+//
+// This was 12 x 5min = one hour, which is the wrong scale for the thing being
+// watched: a demo, an incident, or an attack burst all play out in seconds. At
+// hour scale eleven of the twelve buckets are always empty, so the chart renders
+// as a flat zero line with one spike crushed against the right edge and reads as
+// broken. Two minutes gives the line an actual shape.
+export const BUCKET_MS = 5000;
+export const BUCKET_COUNT = 24;
+
+// input: normalized alerts array (each carrying a numeric `ts`)
 function buildTimeseries(alerts) {
-  // 12 buckets of 5 minutes = last hour, matching the RiskChart panel title
+  // Quantise the origin to a bucket boundary. With a raw Date.now() every one of
+  // the 24 bucket edges and X labels shifted on every 2s poll, so Recharts saw a
+  // brand-new label set each tick and re-animated the whole line - visible
+  // jitter. Quantised, the window advances one whole bucket at a time.
+  const now = Math.ceil(Date.now() / BUCKET_MS) * BUCKET_MS;
+  const origin = now - BUCKET_COUNT * BUCKET_MS;
+
   const buckets = [];
-  const now = Date.now();
-  for (let i = 11; i >= 0; i -= 1) {
-    const bucketEnd = now - i * 5 * 60 * 1000;
-    const bucketStart = bucketEnd - 5 * 60 * 1000;
-    const label = new Date(bucketEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const inBucket = alerts.filter((a) => {
-      const t = new Date(a.timestamp).getTime();
-      return t >= bucketStart && t < bucketEnd;
-    });
+  for (let i = 0; i < BUCKET_COUNT; i += 1) {
+    const end = origin + (i + 1) * BUCKET_MS;
     buckets.push({
-      time: label,
-      allowed: inBucket.filter((a) => a.decision === 'allow' || a.decision === 'observe').length,
-      blocked: inBucket.filter((a) => a.decision === 'block').length
+      time: new Date(end).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }),
+      allowed: 0,
+      challenged: 0,
+      blocked: 0
     });
   }
+
+  // single pass over the alerts instead of a full array scan per bucket
+  alerts.forEach((a) => {
+    if (!Number.isFinite(a.ts)) return;
+    const idx = Math.floor((a.ts - origin) / BUCKET_MS);
+    if (idx < 0 || idx >= BUCKET_COUNT) return;
+    if (a.decision === 'block') buckets[idx].blocked += 1;
+    else if (a.decision === 'challenge') buckets[idx].challenged += 1;
+    else if (a.decision === 'allow' || a.decision === 'observe') buckets[idx].allowed += 1;
+  });
+
   return buckets;
 }
 
@@ -84,10 +117,38 @@ function buildTimeseries(alerts) {
 // doesn't compute itself (timeseries, mitre_counts, latency percentiles,
 // overall_risk) - genuinely presentation-layer aggregation, not something
 // that belongs baked into the gateway's own response.
+// How far back "current threat level" looks. Long enough that the gauge does not
+// flicker between polls, short enough that it visibly cools once an attack stops.
+const THREAT_WINDOW_MS = 120000;
+
+// Current system threat level, 0-100.
+//
+// This was the arithmetic mean of every request's risk, allowed requests scored
+// 0 included. In any realistic traffic mix - say 40 legitimate requests and 10
+// blocked BOLA attempts at risk 90 - that averages out to 18, so the 200px hero
+// gauge rendered a calm green "018 / SAFE" directly above a threat feed full of
+// red BLOCKED rows. The most prominent number on the console contradicted the
+// evidence beneath it, which is worse than showing nothing.
+//
+// Severity does not average. What an operator needs to know is how bad the worst
+// thing happening right now is, tempered by how much of current traffic is
+// hostile: one blocked probe in a quiet minute is not the same emergency as half
+// of all traffic being blocked. Both terms are drawn from the same recent window
+// so the gauge cools on its own once the attack stops.
+function computeThreatLevel(alerts, nowMs) {
+  const recent = alerts.filter((a) => Number.isFinite(a.ts) && nowMs - a.ts <= THREAT_WINDOW_MS);
+  if (recent.length === 0) return 0;
+
+  const peak = recent.reduce((m, a) => Math.max(m, a.risk_score || 0), 0);
+  const hostile = recent.filter((a) => a.decision === 'block' || a.decision === 'challenge').length;
+  const hostileRate = hostile / recent.length;
+
+  return Math.min(100, Math.round(0.6 * peak + 0.4 * hostileRate * 100));
+}
+
 export function deriveMetrics(rawMetrics, normalizedAlerts) {
   const alerts = normalizedAlerts || [];
   const latencies = alerts.map((a) => a.latency_ms).filter((n) => typeof n === 'number').sort((a, b) => a - b);
-  const risks = alerts.map((a) => a.risk_score).filter((n) => typeof n === 'number');
   const windowTotal = alerts.length;
   const windowBlocked = alerts.filter((a) => a.decision === 'block').length;
 
@@ -105,10 +166,17 @@ export function deriveMetrics(rawMetrics, normalizedAlerts) {
     blocked: rawMetrics?.blocked ?? 0,
     incidents: rawMetrics?.incidents ?? 0,
     entities_count: rawMetrics?.entities ?? 0,
-    block_rate: windowTotal ? Math.round((windowBlocked / windowTotal) * 100) : 0,
+    // Block rate is computed over the same lifetime counters the decision pie
+    // uses, rather than over the fetched alert window. The two sat side by side
+    // on one screen describing the same quantity over different denominators,
+    // so the tile could read 45% while the pie read 20%.
+    block_rate: rawMetrics?.requests
+      ? Math.round((rawMetrics.blocked / rawMetrics.requests) * 100)
+      : (windowTotal ? Math.round((windowBlocked / windowTotal) * 100) : 0),
     avg_latency_ms: latencies.length ? latencies.reduce((s, v) => s + v, 0) / latencies.length : 0,
     p95_latency_ms: percentile(latencies, 95),
-    overall_risk: risks.length ? Math.round(risks.reduce((s, v) => s + v, 0) / risks.length) : 0,
+    p99_latency_ms: percentile(latencies, 99),
+    overall_risk: computeThreatLevel(alerts, Date.now()),
     mitre_counts: mitreCounts,
     timeseries: buildTimeseries(alerts),
     policy: rawMetrics?.policy ?? null
@@ -120,17 +188,38 @@ export function deriveMetrics(rawMetrics, normalizedAlerts) {
 // backend's entity record doesn't carry itself.
 export function deriveEntities(rawEntities, normalizedAlerts) {
   const alerts = normalizedAlerts || [];
+
+  // One grouping pass instead of a full alerts.filter() per entity. The old
+  // shape was O(entities x alerts): 100 entities against a 500-alert window is
+  // 50,000 comparisons, redone from scratch every 2 seconds.
+  const bySubject = new Map();
+  alerts.forEach((a) => {
+    let bucket = bySubject.get(a.subject);
+    if (!bucket) {
+      bucket = { count: 0, paths: new Set() };
+      bySubject.set(a.subject, bucket);
+    }
+    bucket.count += 1;
+    bucket.paths.add(a.path);
+  });
+
   return (rawEntities || []).map((e) => {
-    const own = alerts.filter((a) => a.subject === e.id);
-    const endpoints = new Set(own.map((a) => a.path)).size;
+    const windowed = bySubject.get(e.id);
     const status = e.blocked ? 'blocked' : e.risk > 30 ? 'flagged' : 'active';
     return {
       subject: e.id,
-      request_count: own.length,
+      // The gateway now tracks these per entity for the whole life of the
+      // process, so prefer its figures. Deriving them from the alert window
+      // meant an entity's request count silently shrank as its older traffic
+      // aged out of the window - the number went *down* while the user kept
+      // making requests. The window-derived values remain as a fallback for an
+      // older gateway build that does not serve these fields.
+      request_count: e.request_count ?? windowed?.count ?? 0,
+      endpoints: e.endpoints ?? windowed?.paths.size ?? 0,
+      objects: e.objects ?? 0,
       risk_score: e.risk,
-      roles: e.roles,
-      tenant: e.tenant,
-      endpoints,
+      roles: e.roles || [],
+      tenant: e.tenant || '',
       status
     };
   });

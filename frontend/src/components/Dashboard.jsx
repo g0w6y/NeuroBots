@@ -32,9 +32,18 @@ export default function Dashboard() {
         <ConnectionBadge state={connectionState} />
       </header>
 
-      {connectionState === 'error' && (
-        <div className="mb-4 rounded border border-risk-danger/30 bg-risk-danger-dim/40 px-3 py-2 font-mono text-xs text-risk-danger">
-          gateway unreachable at {GATEWAY_URL}{lastError ? ` — ${lastError}` : ''}. Retrying every{' '}
+      {(connectionState === 'error' || connectionState === 'degraded') && (
+        <div
+          className={`mb-4 rounded border px-3 py-2 font-mono text-xs ${
+            connectionState === 'error'
+              ? 'border-risk-danger/30 bg-risk-danger-dim/40 text-risk-danger'
+              : 'border-risk-caution/30 bg-risk-caution-dim/40 text-risk-caution'
+          }`}
+        >
+          {connectionState === 'error'
+            ? `no response from ${GATEWAY_URL}`
+            : `partial response from ${GATEWAY_URL} — some panels are holding their last values`}
+          {lastError ? ` — ${lastError}` : ''}. Retrying every{' '}
           {(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s. Showing last known data, not sample data.
         </div>
       )}
@@ -73,6 +82,7 @@ function ConnectionBadge({ state }) {
   const map = {
     connecting: { color: 'bg-ink-faint', label: 'Connecting', pulse: false },
     live: { color: 'bg-accent', label: 'Live', pulse: true },
+    degraded: { color: 'bg-risk-caution', label: 'Partial data', pulse: false },
     error: { color: 'bg-risk-danger', label: 'Gateway unreachable', pulse: false }
   };
   const s = map[state] || map.connecting;

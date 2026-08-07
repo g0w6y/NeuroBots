@@ -71,10 +71,24 @@ def validate_jwt(authz: str) -> JWTResult:
             return result
 
         now = time.time()
-        exp = payload_data.get("exp", 0)
+        exp = payload_data.get("exp")
         nbf = payload_data.get("nbf", 0)
 
-        if exp and now >= exp:
+        # A token with no `exp` claim at all used to sail through: the check was
+        # `if exp and now >= exp`, and a missing claim is falsy, so the entire
+        # expiry test was skipped and the credential was valid forever. An
+        # eternal bearer token is strictly worse than an expired one - it is the
+        # thing expiry exists to prevent - so absence of the claim is treated as
+        # expired rather than as permission.
+        if exp is None:
+            # Distinct from "expired". An aged-out session is a normal lifecycle
+            # event that deserves a step-up challenge; a token that asserts no
+            # expiry at all is a non-conforming credential a compliant issuer
+            # would never mint, so it is treated as a forgery indicator.
+            result.problem = "no_exp"
+            return result
+
+        if now >= exp:
             result.problem = "expired"
             return result
 
@@ -87,14 +101,27 @@ def validate_jwt(authz: str) -> JWTResult:
             result.problem = "bad_iss"
             return result
 
+        # RFC 7519 4.1.3: `aud` is either a string or an array of strings, and
+        # essentially every real identity provider emits the array form. Comparing
+        # it to a string with `!=` rejected all of them, which is a guaranteed
+        # false positive against real traffic - the one failure mode this gateway
+        # is measured on.
         aud = payload_data.get("aud", "")
-        if settings.audience and aud != settings.audience:
+        aud_values = aud if isinstance(aud, list) else [aud]
+        if settings.audience and settings.audience not in aud_values:
             result.problem = "bad_aud"
             return result
 
         result.valid = True
         result.subject = payload_data.get("sub", "")
-        result.roles = payload_data.get("roles", [])
+
+        # `roles` arrives from an external issuer, so it is whatever that issuer
+        # decided to send. A bare string ("admin") used to be iterated character
+        # by character, so a genuine admin failed the BFLA role check; a null
+        # raised TypeError inside check_bfla, which propagated out of the request
+        # handler as a 500 rather than any decision at all.
+        raw_roles = payload_data.get("roles") or []
+        result.roles = raw_roles if isinstance(raw_roles, list) else [raw_roles]
         result.scopes = payload_data.get("scopes", [])
         result.tenant = payload_data.get("tenant", "")
         result.issuer = iss
@@ -114,6 +141,8 @@ def jwt_error_signal(problem: str) -> dict:
         "nbf": {"detector": "jwt_not_yet_valid", "weight": 60, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT not yet valid", "hard": True},
         "bad_aud": {"detector": "jwt_bad_audience", "weight": 75, "owasp": "API2:2023 Broken Authentication", "mitre": "T1550 Use Alternate Auth", "evidence": "JWT audience mismatch", "hard": True},
         "bad_iss": {"detector": "jwt_bad_issuer", "weight": 75, "owasp": "API2:2023 Broken Authentication", "mitre": "T1550 Use Alternate Auth", "evidence": "JWT issuer not trusted", "hard": True},
+        "no_exp": {"detector": "jwt_no_expiry", "weight": 85, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT carries no exp claim - a non-expiring bearer token", "hard": True},
+        "unsupported_alg": {"detector": "jwt_alg_confusion", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT signed with an algorithm this gateway does not accept", "hard": True},
         "malformed": {"detector": "jwt_malformed", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT malformed", "hard": True},
     }
     return signals.get(problem, {"detector": "jwt_invalid", "weight": 90, "owasp": "API2:2023 Broken Authentication", "mitre": "T1078 Valid Accounts", "evidence": "JWT invalid", "hard": True})

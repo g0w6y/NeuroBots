@@ -27,8 +27,29 @@ python main.py                       # listens on 0.0.0.0:8080
 cd frontend
 npm install
 cp .env.example .env                 # VITE_GATEWAY_URL / VITE_ADMIN_KEY must match the gateway
-npm run dev                          # http://localhost:5173
+npm run dev                          # http://localhost:3000  (vite.config.js sets port 3000)
+
+# terminal 4 - attack simulation suite (this is what puts data on the dashboard)
+cd backend && source venv/bin/activate
+python attack_sim/simulate.py        # one pass + scorecard
+python attack_sim/simulate.py --loop # keep firing, for a live demo
 ```
+
+`simulate.py` drives real traffic at the gateway and scores it against the
+success criteria: it runs legitimate traffic, then all attack classes, then
+legitimate traffic *again* — that last phase is the one that matters, because a
+gateway which blocks real users after an attack has just traded a false negative
+for a false positive. It prints detection rate, false-positive count and measured
+p50/p99 gateway overhead.
+
+Verify the dashboard is reading the gateway correctly at any point with:
+
+```bash
+cd frontend && node contract-check.mjs
+```
+
+which runs the dashboard's own transform functions over live gateway responses
+and asserts every field each panel renders is actually present.
 
 Skipping `demo_upstream.py` doesn't break detection — every gateway decision (JWT,
 BOLA, BFLA, rate limiting, autonomous mitigation) is identical either way. It only
