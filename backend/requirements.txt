@@ -1,5 +1,12 @@
 fastapi==0.104.1
 uvicorn==0.24.0
+# Bare `uvicorn` ships no WebSocket implementation, so /ws/events - the live
+# decision stream the dashboard subscribes to - failed its handshake with
+# "Unsupported upgrade request" and fell back to polling on every machine. The
+# endpoint has existed and been unserveable the whole time; this is what makes
+# it real. (uvicorn[standard] would also pull this in, along with uvloop, which
+# has no Windows wheel.)
+websockets==12.0
 pyjwt==2.13.0
 httpx==0.25.2
 python-dotenv==1.0.0

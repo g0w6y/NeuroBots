@@ -47,7 +47,7 @@ const VIEW_SUBTITLE = {
   logs: 'Full audit log'
 };
 
-function SideNav({ connectionState, view, onNavigate, counts }) {
+function SideNav({ connectionState, transport, view, onNavigate, counts }) {
   return (
     <nav className="fixed left-0 top-0 z-40 hidden h-full w-60 flex-col border-r border-white/10 bg-canvas-sunken py-6 md:flex">
       <div className="mb-8 px-4">
@@ -94,7 +94,7 @@ function SideNav({ connectionState, view, onNavigate, counts }) {
           <div className="label-caps mb-1 text-ink-faint">Gateway</div>
           <div className="break-all font-mono text-[11px] text-ink-muted">{GATEWAY_URL}</div>
         </div>
-        <ConnectionBadge state={connectionState} />
+        <ConnectionBadge state={connectionState} transport={transport} />
       </div>
     </nav>
   );
@@ -125,7 +125,7 @@ function StatCard({ label, value, icon, tone = 'default', foot, alert }) {
 }
 
 export default function Dashboard() {
-  const { alerts, allAlerts, metrics, entities, incidents, connectionState, lastError } = useLiveData();
+  const { alerts, allAlerts, metrics, entities, incidents, connectionState, lastError, transport } = useLiveData();
   const [view, setView] = useState('overview');
 
   // Sidebar badges. Only surfaced where the number is actionable - a blocked
@@ -142,7 +142,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen tactical-grid">
-      <SideNav connectionState={connectionState} view={view} onNavigate={setView} counts={counts} />
+      <SideNav connectionState={connectionState} transport={transport} view={view} onNavigate={setView} counts={counts} />
 
       <header className="fixed top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/10 bg-canvas/80 px-4 backdrop-blur-md md:pl-[256px] md:pr-8">
         <div>
@@ -150,7 +150,10 @@ export default function Dashboard() {
             {NAV.find((n) => n.id === view)?.label || 'Threat Console'}
           </h2>
           <p className="font-mono text-[10px] text-ink-faint">
-            {VIEW_SUBTITLE[view]} · polling every {(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s
+            {VIEW_SUBTITLE[view]} ·{' '}
+            {transport === 'websocket'
+              ? 'streaming decisions over /ws/events'
+              : `polling every ${(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -167,7 +170,7 @@ export default function Dashboard() {
             ))}
           </select>
           <div className="md:hidden">
-            <ConnectionBadge state={connectionState} />
+            <ConnectionBadge state={connectionState} transport={transport} />
           </div>
         </div>
       </header>
@@ -326,7 +329,7 @@ function DecisionBar({ metrics }) {
   );
 }
 
-function ConnectionBadge({ state }) {
+function ConnectionBadge({ state, transport }) {
   const map = {
     connecting: { color: 'bg-ink-faint', label: 'Connecting', pulse: false },
     live: { color: 'bg-risk-safe', label: 'Live', pulse: true },
@@ -334,10 +337,16 @@ function ConnectionBadge({ state }) {
     error: { color: 'bg-risk-danger', label: 'Gateway unreachable', pulse: false }
   };
   const s = map[state] || map.connecting;
+  // "Live" meant a 2-second poll for as long as this badge has existed. Naming
+  // the transport keeps the claim honest in both directions: pushed means the
+  // gateway's WebSocket is delivering decisions as they happen, polled means it
+  // is not and the feed is up to VITE_POLL_INTERVAL behind.
+  const detail = state === 'live' ? (transport === 'websocket' ? 'pushed' : 'polled') : null;
   return (
     <span className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-canvas-panel px-3 py-1.5 font-mono text-[11px] text-ink-muted">
       <span className={`h-2 w-2 rounded-full ${s.color} ${s.pulse ? 'animate-breathe' : ''}`} />
       {s.label}
+      {detail && <span className="text-ink-faint">· {detail}</span>}
     </span>
   );
 }
