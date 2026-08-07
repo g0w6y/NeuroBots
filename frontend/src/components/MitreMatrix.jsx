@@ -19,20 +19,33 @@ function severity(count) {
 
 export default function MitreMatrix({ counts = {} }) {
   return (
-    <div className="glass-panel rounded-lg p-4">
-      <h3 className="mb-3 font-display text-sm font-semibold text-ink">MITRE ATT&amp;CK matrix</h3>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+    <div className="glass-panel overflow-hidden rounded-lg">
+      <div className="border-b border-canvas-line px-4 py-3">
+        <h3 className="font-display text-sm font-semibold text-ink">MITRE ATT&amp;CK matrix</h3>
+      </div>
+
+      {/* Fixed at 2 columns rather than viewport breakpoints (sm:/xl:) - this
+          panel always lives in a narrow ~3/12 grid column next to Threat Feed,
+          not the full viewport, so a breakpoint like xl:grid-cols-4 fires from
+          screen width while the column itself stays a few hundred px wide,
+          cramming 4 tiles into no room. 2 columns also divides the 6
+          techniques evenly into 3 full rows - no ragged half-empty last row
+          at any width. */}
+      <div className="grid grid-cols-2 gap-2 p-4">
         {TECHNIQUES.map((t) => {
           const count = counts[t.id] || 0;
           const s = severity(count);
           return (
-            <div key={t.id} className={`border-l-[3px] ${s.rule} bg-canvas-raised p-3`}>
-              <div className="flex items-baseline justify-between">
+            <div
+              key={t.id}
+              className={`flex h-full flex-col justify-between border-l-[3px] ${s.rule} bg-canvas-raised p-3`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
                 <span className="font-mono text-[11px] text-ink-muted">{t.id}</span>
                 <span className={`font-mono text-lg font-semibold tabular-nums ${s.text}`}>{count}</span>
               </div>
-              <div className="mt-1 text-xs font-medium text-ink">{t.name}</div>
-              <div className="text-[10px] text-ink-faint">{t.hint}</div>
+              <div className="mt-1 text-xs font-medium leading-snug text-ink">{t.name}</div>
+              <div className="mt-0.5 text-[10px] leading-snug text-ink-faint">{t.hint}</div>
             </div>
           );
         })}

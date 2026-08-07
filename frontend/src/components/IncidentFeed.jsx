@@ -12,7 +12,7 @@ function timeAgo(ts) {
 
 export default function IncidentFeed({ incidents }) {
   return (
-    <div className="glass-panel rounded-lg p-4">
+    <div className="glass-panel flex h-full min-h-[180px] flex-col rounded-lg p-4">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-display text-sm font-semibold text-ink">Autonomous mitigation</h3>
         <span className="font-mono text-[10px] uppercase tracking-wide text-ink-faint">
@@ -26,7 +26,7 @@ export default function IncidentFeed({ incidents }) {
         </div>
       )}
 
-      <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
         {incidents.slice(0, 20).map((i) => (
           <div
             key={i.id}

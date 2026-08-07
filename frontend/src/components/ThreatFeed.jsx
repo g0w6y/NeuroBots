@@ -10,6 +10,21 @@ const DECISION_STYLES = {
   block: { rule: 'border-l-risk-danger', text: 'text-risk-danger', label: 'Blocked' }
 };
 
+// One template, used by the header labels and every row, so the two can never
+// drift out of alignment. Request gets a real floor (160px) instead of a bare
+// 1fr - previously it had no minimum at all, so at common laptop widths
+// (the panel here is only ~half the content column) the *most* important
+// column - the actual request - was the first thing to shrink toward 0 while
+// Subject/IP/When held their full fixed width. The wrapper this sits in
+// scrolls horizontally rather than clipping once even this floor doesn't fit.
+const GRID_TEMPLATE = 'grid-cols-[78px_44px_minmax(160px,1fr)_minmax(84px,140px)_minmax(80px,120px)_72px]';
+// Sum of every column's minimum + 5 gaps (gap-3 = 12px) - the point below
+// which the row can no longer shrink and the container should scroll instead.
+// Only applies from md up: below md, GRID_TEMPLATE is overridden by
+// max-md:grid-cols-1 and rows stack single-column full width, so forcing this
+// floor there would make a narrow phone scroll horizontally for no reason.
+const MIN_TABLE_WIDTH_CLASS = 'md:min-w-[580px]';
+
 function riskTextColor(score) {
   if (score > 60) return 'text-risk-danger';
   if (score > 30) return 'text-risk-caution';
@@ -44,7 +59,7 @@ function Row({ alert }) {
           setOpen((v) => !v);
         }
       }}
-      className={`animate-flash-in grid grid-cols-[90px_60px_1fr_140px_120px_90px] items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-canvas-raised/60 max-md:grid-cols-1 max-md:gap-1 ${hasDetail ? 'cursor-pointer' : ''}`}
+      className={`animate-flash-in grid ${GRID_TEMPLATE} items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-canvas-raised/60 max-md:grid-cols-1 max-md:gap-1 ${hasDetail ? 'cursor-pointer' : ''}`}
     >
       <span className={`font-mono text-[11px] font-semibold uppercase tracking-wide ${style.text}`}>
         {style.label}
@@ -116,21 +131,32 @@ function ThreatFeed({ alerts }) {
         </h2>
         <span className="h-1.5 w-1.5 rounded-full bg-accent animate-breathe" aria-label="auto-updating" />
       </div>
-      <div className="hidden grid-cols-[90px_60px_1fr_140px_120px_90px] gap-3 border-b border-canvas-line px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-faint md:grid">
-        <span>Decision</span>
-        <span>Risk</span>
-        <span>Request</span>
-        <span>Subject</span>
-        <span>IP</span>
-        <span>When</span>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {alerts.length === 0 && (
-          <div className="p-8 text-center font-mono text-xs text-ink-faint">Awaiting first request…</div>
-        )}
-        {alerts.slice(0, 50).map((alert) => (
-          <Row key={alert.id} alert={alert} />
-        ))}
+
+      {/* Header labels and rows live inside the SAME horizontally-scrolling
+          box, both pinned to the same MIN_TABLE_WIDTH, so if a column ever
+          can't fit the panel scrolls as one unit instead of the labels
+          clipping (outer panel is overflow-hidden) while the rows below them
+          silently drift out of alignment. */}
+      <div className="flex-1 overflow-auto">
+        <div className={MIN_TABLE_WIDTH_CLASS}>
+          <div
+            className={`sticky top-0 z-10 hidden ${GRID_TEMPLATE} gap-3 border-b border-canvas-line bg-canvas-sunken px-4 py-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-faint md:grid`}
+          >
+            <span>Decision</span>
+            <span>Risk</span>
+            <span>Request</span>
+            <span>Subject</span>
+            <span>IP</span>
+            <span>When</span>
+          </div>
+
+          {alerts.length === 0 && (
+            <div className="p-8 text-center font-mono text-xs text-ink-faint">Awaiting first request…</div>
+          )}
+          {alerts.slice(0, 50).map((alert) => (
+            <Row key={alert.id} alert={alert} />
+          ))}
+        </div>
       </div>
     </div>
   );
