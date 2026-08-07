@@ -182,6 +182,22 @@ class AuditLog:
         except Exception:
             return list(self._alerts_fallback)[-limit:]
 
+    def reset(self) -> int:
+        """Clear the in-memory display window and counters for a fresh demo run.
+
+        Postgres rows are deliberately left alone - an audit log that can be
+        erased through the API is not an audit log. With Postgres connected the
+        admin routes keep serving durable history; only the in-process view of
+        it resets.
+        """
+        cleared = len(self._alerts_fallback)
+        self._alerts_fallback.clear()
+        self._incidents_fallback.clear()
+        for k in self._totals:
+            self._totals[k] = 0
+        self._incident_total = 0
+        return cleared
+
     def _fallback_counts(self) -> dict:
         return {
             "requests": self._totals["requests"],

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     bola_strict_mode: bool = False
     ownership_seed_file: str = "seed_ownership.json"
+    route_config_file: str = "routes.json"
 
     # Comma-separated peer addresses whose X-Forwarded-For header is believed.
     # Empty by default, which means the socket peer is always used. The client

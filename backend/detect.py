@@ -150,9 +150,27 @@ def fuse_signals(signals: List[Signal], threshold_block: int = 70, threshold_cha
     # block made the "challenge" decision unreachable in practice - the policy
     # engine advertised three outcomes and could only ever produce two - and
     # turned routine token expiry into an outage.
-    hard_score = max((s.weight for s in signals if s.hard), default=0)
+    hard_signals = [s for s in signals if s.hard]
+    soft_signals = [s for s in signals if not s.hard]
+    hard_score = max((s.weight for s in hard_signals), default=0)
 
-    if score >= threshold_block or hard_score >= threshold_block:
+    # The documented policy is "hard signal -> block; 2+ corroborating soft ->
+    # block; single soft -> challenge", but the score alone did not encode that:
+    # a lone behavioural signal is scored at its full weight, and both live soft
+    # detectors peak above the 70 block threshold (sequence anomaly 80, volume
+    # spike 75). So one uncorroborated *inference* could slam the door on its
+    # own. Verified against the running gateway: a legitimate subject that merely
+    # sped up - 22 req/10s against its usual 5, under both the 25/3s burst limit
+    # and the 120/60s sustained limit, nothing forged, nothing it did not own -
+    # produced a bare control_plane_anomaly and nothing else. Behaviour unlike
+    # your own past behaviour is not proof of intent; it is a reason to ask the
+    # user to prove who they are, which is exactly what `challenge` is for.
+    corroborated = bool(hard_signals) or len(soft_signals) >= 2
+
+    if hard_score >= threshold_block:
+        return "block"
+
+    if score >= threshold_block and corroborated:
         return "block"
 
     if score >= threshold_challenge or hard_score > 0:

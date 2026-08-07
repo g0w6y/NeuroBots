@@ -1,0 +1,55 @@
+{
+  "_comment": "Route table for the NeuroBots gateway (BACKEND.md Part 3). Edit this file to protect a new endpoint - no code change, no redeploy. Any path under a protected prefix that is NOT listed here still requires a valid token; listing it here is what adds object-level (BOLA) and role-level (BFLA) rules on top.",
+
+  "protected_prefixes": ["api"],
+
+  "policy": {
+    "block_threshold": 70,
+    "challenge_threshold": 45,
+    "rate_limit_requests": 120,
+    "rate_limit_window_sec": 60
+  },
+
+  "routes": [
+    {
+      "method": "GET",
+      "pattern": "/api/accounts/{id}",
+      "resource": "account",
+      "object_param": "id",
+      "required_roles": [],
+      "require_auth": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/accounts/{id}/transactions",
+      "resource": "account",
+      "object_param": "id",
+      "required_roles": [],
+      "require_auth": true
+    },
+    {
+      "method": "POST",
+      "pattern": "/api/transfers",
+      "resource": "transfer",
+      "object_param": "",
+      "required_roles": [],
+      "require_auth": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/admin/users",
+      "resource": "admin",
+      "object_param": "",
+      "required_roles": ["admin"],
+      "require_auth": true
+    },
+    {
+      "method": "GET",
+      "pattern": "/api/admin/audit",
+      "resource": "admin",
+      "object_param": "",
+      "required_roles": ["admin"],
+      "require_auth": true
+    }
+  ]
+}

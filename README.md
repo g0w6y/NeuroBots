@@ -7,8 +7,18 @@ Zero Trust API Security Intelligence and Autonomous Authorization Protection Pla
 ```
 backend/    FastAPI gateway - JWT validation, BOLA/BFLA detection, rate limiting,
             multi-agent anomaly detection, autonomous escalation, audit log
+  routes.json       the protected route table (see below) - edit, don't recompile
+  seed_ownership.json  pre-provisioned object ownership, loaded at startup
 frontend/   React/Vite dashboard - reads real gateway state, no simulated data
 ```
+
+### Protecting a new endpoint
+
+`backend/routes.json` is the route table, read at startup. Adding an entry there
+is what gives a path object-level (BOLA) and role-level (BFLA) rules — no code
+change and no redeploy. Anything under a protected prefix that is *not* listed
+still requires a valid token; listing it is what adds authorization on top of
+authentication. Point `ROUTE_CONFIG_FILE` at a different file to override.
 
 ## Run it end to end
 
@@ -34,6 +44,15 @@ cd backend && source venv/bin/activate
 python attack_sim/simulate.py        # one pass + scorecard
 python attack_sim/simulate.py --loop # keep firing, for a live demo
 ```
+
+**Score a run against a freshly started gateway.** The suite reuses a small cast
+of identities, and several forgery cases share one subject, so on a second
+back-to-back run that subject is still inside the autonomous cooldown it earned
+the first time and returns `auto_escalated_block` where the suite expects
+`challenge`. That is the product working — a proven forger is supposed to stay
+blocked — but it makes the scorecard read 11/12 instead of 12/12. Restart
+`main.py` between scored runs. `POST /admin/reset` clears alerts and escalation
+state but deliberately preserves ownership grants, so it is not a substitute.
 
 `simulate.py` drives real traffic at the gateway and scores it against the
 success criteria: it runs legitimate traffic, then all attack classes, then

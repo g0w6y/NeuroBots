@@ -1,5 +1,6 @@
-﻿from fastapi import FastAPI, Request, Header, Depends, HTTPException
+from fastapi import FastAPI, Request, Header, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
+import hmac
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import time
@@ -28,7 +29,9 @@ def utc_iso(dt: datetime = None) -> str:
 
 
 def require_admin(x_admin_key: str = Header(default="")):
-    if x_admin_key != settings.admin_api_key:
+    # constant-time: a plain != leaks key material through timing, and this is
+    # the only thing standing between the internet and the full decision log
+    if not hmac.compare_digest(x_admin_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="admin auth required")
 
 
@@ -64,6 +67,64 @@ def spawn(coro):
     task.add_done_callback(_background_tasks.discard)
     return task
 
+
+class EventHub:
+    """Fan-out of decision events to connected dashboards.
+
+    BACKEND.md Part 8 asks for decisions to be emitted to a queue or WebSocket
+    so the frontend gets live updates; only 2-second polling existed, and each
+    poll re-fetched up to 500 full alert objects and recomputed every derived
+    metric client-side. Pushing is both cheaper and actually live.
+
+    Polling stays as the fallback, so a dashboard that cannot hold a socket open
+    still works. Broadcast is best-effort by design: a slow or dead subscriber
+    is dropped rather than allowed to apply backpressure to the request path.
+    """
+
+    def __init__(self):
+        self._subscribers: set = set()
+
+    def subscribe(self, queue: asyncio.Queue) -> None:
+        self._subscribers.add(queue)
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self._subscribers.discard(queue)
+
+    @property
+    def subscriber_count(self) -> int:
+        return len(self._subscribers)
+
+    def publish(self, event_type: str, payload: dict) -> None:
+        if not self._subscribers:
+            return
+        message = {"type": event_type, "data": payload}
+        for queue in list(self._subscribers):
+            try:
+                queue.put_nowait(message)
+            except asyncio.QueueFull:
+                # subscriber is not keeping up; drop this event for them rather
+                # than blocking the decision path on a stalled browser tab
+                pass
+
+
+event_hub = EventHub()
+
+
+def emit_alert(alert: dict) -> None:
+    """Persist a decision and push it to live subscribers.
+
+    Both happen off the request path. The audit write is fire-and-forget (but
+    retained, so it cannot be garbage-collected mid-flight); the broadcast is
+    synchronous but non-blocking, since it only ever puts onto in-process queues.
+    """
+    spawn(audit_log.write_alert(alert))
+    event_hub.publish("alert", alert)
+
+
+def emit_incident(incident: dict) -> None:
+    spawn(audit_log.write_incident(incident))
+    event_hub.publish("incident", incident)
+
 _cors_origins = ["*"] if settings.cors_allowed_origins.strip() == "*" else [
     o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()
 ]
@@ -81,12 +142,14 @@ app.add_middleware(
 async def startup_event():
     global upstream_client
     upstream_client = httpx.AsyncClient(timeout=10)
+    load_route_config()
     await store.connect()
     if store.connected:
         control_plane.use_client(store.redis_client)
     await control_plane.start()
     await audit_log.connect()
     await load_ownership_seed()
+    spawn(entity_sweeper())
 
 
 @app.on_event("shutdown")
@@ -112,6 +175,7 @@ class EntityProfile:
         self.objects = defaultdict(set)
         self.endpoints = set()
         self.request_count = 0
+        self.last_seen = time.time()
         self.roles = []
         self.tenant = ""
         # Peak-with-decay, not last-request risk. A raw assignment lets an
@@ -127,6 +191,38 @@ class EntityProfile:
 
 
 entities = {}
+
+# Bounds on the entity table. Every distinct subject gets an EntityProfile, and
+# unauthenticated traffic mints one per source address, so without a ceiling and
+# a sweep this map grows for the lifetime of the process - and /admin/entities
+# walks all of it on every 2-second dashboard poll.
+MAX_ENDPOINTS_PER_ENTITY = 200
+MAX_ENTITIES = 5000
+ENTITY_IDLE_SEC = 900
+
+
+def sweep_entities(now: float) -> int:
+    stale = [s for s, e in entities.items() if now - e.last_seen > ENTITY_IDLE_SEC]
+    for s in stale:
+        del entities[s]
+    if len(entities) > MAX_ENTITIES:
+        for s, _ in sorted(entities.items(), key=lambda kv: kv[1].last_seen)[: len(entities) - MAX_ENTITIES]:
+            del entities[s]
+            stale.append(s)
+    return len(stale)
+
+
+async def entity_sweeper():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            dropped = sweep_entities(time.time())
+            if dropped:
+                print(f"Entities: swept {dropped} idle profiles")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"Entities: sweep failed ({type(e).__name__}: {e})")
 
 # Alerts previously carried no identifier, so the dashboard synthesised a React
 # key from time+subject+path. Two requests by one subject to one path inside the
@@ -218,7 +314,10 @@ async def load_ownership_seed():
         print(f"Ownership seed load failed: {e}")
 
 
-ROUTES = [
+# Fallback route table, used only if routes.json is missing or unreadable. The
+# gateway must come up with *some* policy rather than none - an empty route table
+# would mean no object- or role-level rules anywhere.
+DEFAULT_ROUTES = [
     ("GET", ["api", "accounts", "{id}"], {"resource": "account", "object_param": "id", "required_roles": [], "require_auth": True}),
     ("GET", ["api", "accounts", "{id}", "transactions"], {"resource": "account", "object_param": "id", "required_roles": [], "require_auth": True}),
     ("POST", ["api", "transfers"], {"resource": "transfer", "object_param": "", "required_roles": [], "require_auth": True}),
@@ -226,6 +325,7 @@ ROUTES = [
     ("GET", ["api", "admin", "audit"], {"resource": "admin", "object_param": "", "required_roles": ["admin"], "require_auth": True}),
 ]
 
+ROUTES = list(DEFAULT_ROUTES)
 
 # Any path under one of these prefixes is protected whether or not it appears in
 # ROUTES. Without this the gateway failed OPEN on every unlisted path: ROUTES
@@ -235,6 +335,52 @@ ROUTES = [
 # explicitly described" is the whole premise of a zero-trust gateway; an allowlist
 # that only covers what someone remembered to enumerate is the opposite.
 PROTECTED_PREFIXES = ("api",)
+
+
+def load_route_config():
+    """Load the route table from JSON, per BACKEND.md Part 3.
+
+    The table was a Python literal, which meant protecting a new endpoint
+    required editing source and restarting - and, combined with the fail-open
+    behaviour that used to accompany it, made forgetting an endpoint a silent
+    security hole rather than a config error.
+    """
+    global ROUTES, PROTECTED_PREFIXES
+
+    if not os.path.exists(settings.route_config_file):
+        print(f"Route config: {settings.route_config_file} not found, using {len(ROUTES)} built-in routes")
+        return
+
+    try:
+        with open(settings.route_config_file, encoding="utf-8") as f:
+            cfg = json.load(f)
+
+        parsed = []
+        for entry in cfg.get("routes", []):
+            method = entry["method"].upper()
+            segments = [s for s in entry["pattern"].split("/") if s]
+            parsed.append((method, segments, {
+                "resource": entry.get("resource", ""),
+                "object_param": entry.get("object_param", ""),
+                "required_roles": entry.get("required_roles", []),
+                "require_auth": entry.get("require_auth", True),
+            }))
+
+        if not parsed:
+            raise ValueError("route config contains no routes")
+
+        ROUTES = parsed
+        prefixes = cfg.get("protected_prefixes")
+        if prefixes:
+            PROTECTED_PREFIXES = tuple(prefixes)
+
+        print(f"Route config: loaded {len(ROUTES)} routes from {settings.route_config_file}, "
+              f"protected prefixes {PROTECTED_PREFIXES}")
+    except Exception as e:
+        # Keep the built-in table rather than starting with none. A malformed
+        # config must not be a way to turn authorization off.
+        print(f"Route config: {settings.route_config_file} unusable ({e}); "
+              f"keeping {len(ROUTES)} built-in routes")
 
 # Unlisted-but-protected paths get authentication only. Object- and role-level
 # rules need a route definition to say which parameter is the object and which
@@ -350,7 +496,7 @@ async def escalate(key: str, reason: str, now: float) -> dict:
         "blocked_until_epoch": blocked_until,
         "narrative": f"Autonomous mitigation: {key} escalated to a {cooldown}s cooldown after {reason}. This is escalation #{esc_count} for this identity/IP."
     }
-    spawn(audit_log.write_incident(incident))
+    emit_incident(incident)
     return incident
 
 
@@ -374,7 +520,11 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
 
     entity = get_entity(subject)
     entity.request_count += 1
-    entity.endpoints.add(f"{method} {path}")
+    entity.last_seen = time.time()
+    # cap the per-entity endpoint set: an attacker walking distinct URLs would
+    # otherwise pin one string per request in memory for the process lifetime
+    if len(entity.endpoints) < MAX_ENDPOINTS_PER_ENTITY:
+        entity.endpoints.add(f"{method} {path}")
     if jwt_result.valid:
         # roles/tenant come off the verified token, so they are only trustworthy
         # when the signature checked out. Previously these were declared on
@@ -409,7 +559,7 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
             blocked_until, reason = ip_blocked_until, "source IP previously escalated"
         latency_ms = (time.perf_counter() - start_time) * 1000
         alert = build_auto_block_alert(subject, ip, method, path, blocked_until, reason, latency_ms)
-        spawn(audit_log.write_alert(alert))
+        emit_alert(alert)
         return "block", 403, alert, None
 
     route_config, path_params = match_route(method, path)
@@ -552,11 +702,11 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
     # for the forwarded case, sometimes persisting the alert without it.
     if action == "block":
         alert["status_code"] = 403
-        spawn(audit_log.write_alert(alert))
+        emit_alert(alert)
         return action, 403, alert, None
     elif action == "challenge":
         alert["status_code"] = 401
-        spawn(audit_log.write_alert(alert))
+        emit_alert(alert)
         return action, 401, alert, None
     else:
         body = await request.body()
@@ -569,12 +719,12 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
             )
             resp = await upstream_client.send(upstream_req)
             alert["status_code"] = resp.status_code
-            spawn(audit_log.write_alert(alert))
+            emit_alert(alert)
             return action, resp.status_code, alert, resp
         except Exception as exc:
             alert["status_code"] = 502
             alert["explain"] += f" | upstream forward failed: {type(exc).__name__}: {exc}"
-            spawn(audit_log.write_alert(alert))
+            emit_alert(alert)
             return action, 502, alert, None
 
 
@@ -585,7 +735,66 @@ async def health():
         "shared_store_redis": "connected" if store.connected else "disconnected (in-memory fallback active)",
         "audit_log_postgres": "connected" if audit_log.connected else "disconnected (in-memory fallback active)",
         "control_plane_agent": "running" if control_plane.running else "stopped",
+        "control_plane_baselines": len(control_plane.detector.entity_baselines),
+        "live_subscribers": event_hub.subscriber_count,
+        "routes_loaded": len(ROUTES),
         "bola_strict_mode": settings.bola_strict_mode
+    }
+
+
+@app.websocket("/ws/events")
+async def ws_events(websocket: WebSocket):
+    """Live decision stream (BACKEND.md Part 8).
+
+    Auth is the same X-Admin-Key as the REST admin routes, accepted either as a
+    header or as a query parameter - browsers cannot set headers on a WebSocket
+    handshake, so a header-only rule would make this endpoint unusable from the
+    dashboard it exists to serve.
+    """
+    key = websocket.headers.get("x-admin-key") or websocket.query_params.get("key", "")
+    if not hmac.compare_digest(key, settings.admin_api_key):
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    # bounded: a subscriber that stops reading loses events instead of growing
+    # this queue until the process runs out of memory
+    queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    event_hub.subscribe(queue)
+
+    try:
+        await websocket.send_json({"type": "hello", "data": {"policy_routes": len(ROUTES)}})
+        while True:
+            message = await queue.get()
+            await websocket.send_json(message)
+    except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
+        pass
+    finally:
+        event_hub.unsubscribe(queue)
+
+
+@app.post("/admin/reset", dependencies=[Depends(require_admin)])
+async def admin_reset():
+    """Clear runtime state so a demo can be re-run without restarting.
+
+    Once an IP or identity cooldown fired there was no way to clear it short of
+    killing the process - which also threw away the audit log the dashboard was
+    displaying. Ownership grants are deliberately preserved: they are the
+    provisioned authorization data, and wiping them would leave every object
+    unowned, which makes the next BOLA demonstration silently pass.
+    """
+    local = store.reset_runtime_state()
+    redis_keys = await store.reset_redis_runtime_state()
+    entities.clear()
+    control_plane.detector.entity_baselines.clear()
+    control_plane._local_cache.clear()
+    cleared_alerts = audit_log.reset()
+
+    event_hub.publish("reset", {"time": utc_iso()})
+    return {
+        "status": "reset",
+        "cleared": {**local, "redis_keys": redis_keys, "alerts": cleared_alerts},
+        "preserved": "ownership grants, so BOLA detection still has provisioned owners",
     }
 
 
@@ -698,7 +907,14 @@ async def gateway(request: Request):
         return JSONResponse(
             status_code=401,
             content={"error": "step_up_required", "risk": alert["risk"]},
-            headers={"X-ZT-Decision": "challenge", "WWW-Authenticate": 'Bearer error="step_up_required"'}
+            headers={
+                "X-ZT-Decision": "challenge",
+                # was omitted here while block and allow both set it, so a client
+                # inspecting the header saw None on exactly the decision where
+                # the score is the interesting part
+                "X-ZT-Risk": str(alert["risk"]),
+                "WWW-Authenticate": 'Bearer error="step_up_required"',
+            }
         )
     elif resp is not None:
         # Relay the upstream response as-is.

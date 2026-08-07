@@ -184,6 +184,61 @@ def phase_attacks(sim):
                      "block", "block" if burst_caught else "allow", "-", 0.0, bool(burst_caught)))
 
 
+def phase_behavioural(sim):
+    """The attack no fixed threshold catches.
+
+    Every detector above fires on a rule: a bad signature, an object the subject
+    doesn't own, a request count over a line. An attacker who knows the limits
+    just stays under them. This subject does exactly that — it never forges a
+    token, never touches an object it doesn't own, and never crosses any rate
+    limit. It simply starts behaving unlike itself.
+
+    Catching it needs a learned per-subject baseline, which is what the control
+    plane is for. The expected verdict is `challenge`, not `block`: a behavioural
+    deviation is inference rather than proof, so the right answer is to make the
+    user re-authenticate, not to cut off someone who might just be having a busy
+    morning. That distinction is what lets the platform run this detector at all
+    without putting its zero-false-positive claim at risk.
+
+    Takes ~25s, since a baseline has to exist before it can be departed from.
+    """
+    subject = f"analyst_{int(time.time())}"
+    token = mint(subject)
+    # Unique per run, exactly like the subject. A fixed id made this phase
+    # self-poisoning: ownership is first-touch, so run 1's throwaway analyst
+    # permanently became the owner of the object, and every later run's analyst
+    # was a textbook bola_cross_user against it - three hostile blocks, identity
+    # escalated, and the phase then reported the behavioural detector as broken
+    # when what it had actually done was catch a real BOLA violation the suite
+    # manufactured itself. `/admin/reset` cannot rescue this either: it preserves
+    # ownership grants on purpose, so only a full process restart cleared it.
+    obj = f"97{int(time.time()) % 100000}"
+
+    for _ in range(7):                       # ~14s of ordinary, quiet activity
+        sim.send("GET", f"/api/accounts/{obj}", token)
+        time.sleep(2)
+
+    for _ in range(30):                      # ~3 req/s: far off its own baseline,
+        sim.send("GET", f"/api/accounts/{obj}", token)   # but inside 120/60s and 25/3s
+        time.sleep(0.33)
+
+    # The control plane recomputes on a ~1s tick and the data plane reads the
+    # cached result, so a single probe fired at a fixed delay is racing that tick
+    # - it was measured failing roughly one run in two. Poll instead: the verdict
+    # we care about is "does the behavioural layer reach a decision at all",
+    # not "does it happen to have ticked within 2.5 seconds". Each probe is
+    # itself in-window traffic, so the deviation stays live while we look.
+    decision, risk = None, 0
+    for _ in range(8):
+        time.sleep(1.0)
+        _, decision, risk, _, _ = sim.send("GET", f"/api/accounts/{obj}", token)
+        if decision == "challenge":
+            break
+
+    sim.rows.append(("attack", "10. Low-and-slow scrape (under every hard limit)",
+                     "challenge", decision, risk, 0.0, decision == "challenge"))
+
+
 # ------------------------------------------------------------------- scorecard
 
 def report(sim, gateway):
@@ -237,11 +292,19 @@ def run_once(gateway):
     phase_benign(sim)
     print("-- phase 2: the attack suite ------------------------------------------")
     phase_attacks(sim)
+    # This phase was written but never called, so the one detector that needs a
+    # learned baseline went untested by the suite that certifies the product.
+    # It is also the only phase that exercises the control plane at all: every
+    # other case here trips a fixed threshold, and the legitimate phases never
+    # vary their pace, which is why a clean scorecard used to say nothing about
+    # whether the behavioural layer worked. It did not - see backend/MEMORY.md.
+    print("-- phase 3: behavioural drift (needs a baseline, takes ~25s) -----------")
+    phase_behavioural(sim)
     # The critical test: after a full attack barrage from this same machine, do
     # real users still get served? A gateway that blocks them has traded a false
     # negative for a false positive, which is the failure mode this product
     # exists to avoid.
-    print("-- phase 3: legitimate traffic again, post-attack ----------------------")
+    print("-- phase 4: legitimate traffic again, post-attack ----------------------")
     phase_benign(sim, tag="-post")
     return report(sim, gateway.rstrip("/"))
 
