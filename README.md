@@ -6,7 +6,9 @@ Zero Trust API Security Intelligence and Autonomous Authorization Protection Pla
 
 ```
 backend/    FastAPI gateway - JWT validation, BOLA/BFLA detection, rate limiting,
-            multi-agent anomaly detection, autonomous escalation, audit log
+            deterministic anomaly rules, autonomous escalation, audit log
+ml/         Real ML worker - per-entity IsolationForest, Markov sequence model,
+            NetworkX access graph (scikit-learn/networkx, not a rename of backend/)
 frontend/   React/Vite dashboard - reads real gateway state, no simulated data
 ```
 
@@ -23,7 +25,13 @@ python demo_upstream.py              # listens on 0.0.0.0:9000
 cd backend && source venv/bin/activate
 python main.py                       # listens on 0.0.0.0:8080
 
-# terminal 3 - dashboard
+# terminal 3 - ML worker (needs a real Redis reachable by both this and the gateway)
+cd ml
+pip install -r requirements.txt
+REDIS_URL=redis://127.0.0.1:6379 GATEWAY_URL=http://127.0.0.1:8080 \
+  ADMIN_API_KEY=changeme-admin-key python3 worker.py
+
+# terminal 4 - dashboard
 cd frontend
 npm install
 cp .env.example .env                 # VITE_GATEWAY_URL / VITE_ADMIN_KEY must match the gateway
@@ -34,6 +42,12 @@ Skipping `demo_upstream.py` doesn't break detection — every gateway decision (
 BOLA, BFLA, rate limiting, autonomous mitigation) is identical either way. It only
 means legitimate, allowed requests correctly forward and then 502, since there's
 nothing listening at `UPSTREAM_URL` to receive them.
+
+Skipping `ml/worker.py` doesn't break detection either — it only adds a second,
+independent anomaly signal on top of the gateway's own rule engine. Without it
+running, the gateway behaves exactly as if it never existed. It does need a real
+Redis (not the gateway's in-memory fallback) to actually produce that signal, since
+it's a genuinely separate process sharing state through Redis, not through memory.
 
 Redis and PostgreSQL are optional — the gateway falls back to in-memory state for
 both when they're unreachable (rate limits, BOLA ownership, and the audit log all

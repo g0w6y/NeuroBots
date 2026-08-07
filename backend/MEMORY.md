@@ -6,7 +6,43 @@ Status doc for team continuity. Last updated 2026-08-07. Read this before making
 
 A gateway that sits in front of an API and blocks authorization attacks in real time: BOLA, BFLA, JWT tampering, rate abuse. Two-plane design — fast deterministic checks inline (data plane), async behavioral anomaly detection in the background (control plane / multi-agent layer), plus an autonomous escalation layer that remembers proven attackers across requests instead of re-deciding from scratch every time.
 
-## Frontend connection + demo upstream (new)
+## Real ML worker (new, closes a real plan-vs-reality gap)
+
+`ML.md` planned a real machine-learning system: per-entity IsolationForest
+(scikit-learn), Markov chain sequence modeling, NetworkX graph analysis. What
+existed before this was `agents.py` - genuinely useful, genuinely tested, but
+hand-written threshold rules, not ML. That gap is now closed for real: `ml/`
+(sibling to `backend/` in the NeuroBots repo, deliberately NOT nested inside
+`backend/` - `ML.md`'s own docker-compose treats it as a separate top-level
+service, and nesting it would also create an import collision with
+`backend/config.py`) is a standalone async worker doing exactly what was
+planned - see `ml/README.md` for the full detail.
+
+Gateway-side change: `store.get_ml_risk()` (new) reads `ml_risk:{subject}` from
+the same shared Redis, and `main.py` adds it as a second, genuinely independent
+soft signal (`ml_anomaly`) alongside the existing `control_plane_anomaly`. This
+is what makes `fuse_signals()`'s "2+ soft signals required to block" rule
+reachable for the first time - with only one soft-signal source, that path was
+structurally dead code no matter how the code looked.
+
+Verified end to end against a real running stack (real gateway, real disposable
+Redis via Docker, the ML worker as an actual separate process) - not unit-tested
+in isolation. Confirmed: the worker ignores its own startup backlog correctly, a
+genuine BOLA attack (attacker targeting a victim's already-owned object)
+produces zero training data and zero graph edges for the attacker, legitimate
+traffic produces a real trained model and gets written to Redis, and the
+gateway correctly reads a real score back and adds the signal (confirmed via a
+manually-seeded high score triggering a real challenge decision).
+
+Found and documented a real calibration caveat while testing: an
+IsolationForest trained on ~15 samples of pure repetitive legitimate traffic
+scored 0.767 (moderately "anomalous" for traffic that should look boring) -
+small-sample IsolationForest scores are inherently noisy. Raised the minimum
+sample floor, but the real protection is structural: `ml_anomaly` is always a
+soft signal, never blocks alone. See `ml/README.md` for the full reasoning -
+don't rely on threshold-tuning alone to fix this class of noise.
+
+## Frontend connection + demo upstream
 
 Connected to the real dashboard (neurobots-frontend / NeuroBots repo's frontend/) this
 session, not just built alongside it. Found and fixed three real bugs that only show up

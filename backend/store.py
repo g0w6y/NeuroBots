@@ -152,5 +152,19 @@ class SharedStore:
         self._escalation_counts[key] += 1
         return self._escalation_counts[key]
 
+    async def get_ml_risk(self, subject: str) -> Optional[int]:
+        # written by the separate ml/worker.py process (ml.md), never by this
+        # process. if it's unreachable, that just means no ML signal is
+        # available this request - there's no in-memory fallback here, the
+        # worker's whole design depends on shared Redis, and the gateway must
+        # still work perfectly with zero ML signal if that process isn't running.
+        if not self.connected:
+            return None
+        try:
+            val = await self.redis_client.get(f"ml_risk:{subject}")
+            return int(val) if val is not None else None
+        except Exception:
+            return None
+
 
 store = SharedStore()
