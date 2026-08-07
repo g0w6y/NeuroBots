@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     # deployment beyond the demo.
     cors_allowed_origins: str = "*"
 
+    # end-to-end encryption (transit): off by default so local dev/demo needs
+    # no setup, genuinely functional when turned on. Generate a local dev
+    # cert with generate_dev_cert.sh; use a real CA-issued cert in production.
+    # Encryption at rest (the database) is an infrastructure-level
+    # responsibility (e.g. cloud-provider disk/RDS encryption) - not
+    # something meaningfully implemented by adding application code here,
+    # since nothing sensitive enough to warrant field-level encryption is
+    # actually stored (no raw credentials, no unredacted PII - see
+    # security_checks.py's API3 response redaction for the latter).
+    tls_enabled: bool = False
+    tls_certfile: str = "certs/gateway.crt"
+    tls_keyfile: str = "certs/gateway.key"
+
     class Config:
         env_file = ".env"
 

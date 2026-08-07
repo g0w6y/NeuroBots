@@ -15,10 +15,14 @@ from fastapi import FastAPI, Request
 
 app = FastAPI(title="NeuroBots Demo Upstream API")
 
+# ssn is real sample sensitive data, deliberately present so API3 (excessive
+# data exposure) response redaction is genuinely demonstrable end to end -
+# the gateway masks this field for any non-admin caller before the response
+# ever leaves it, matching backend/security_checks.py's SENSITIVE_FIELDS policy.
 ACCOUNTS = {
-    "1001": {"account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD"},
-    "1002": {"account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD"},
-    "1003": {"account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD"},
+    "1001": {"account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD", "ssn": "123-45-6789"},
+    "1002": {"account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD", "ssn": "987-65-4321"},
+    "1003": {"account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD", "ssn": "555-12-3456"},
 }
 
 TRANSACTIONS = {
