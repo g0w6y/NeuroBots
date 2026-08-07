@@ -13,18 +13,27 @@ frontend/   React/Vite dashboard - reads real gateway state, no simulated data
 ## Run it end to end
 
 ```bash
-# terminal 1 - gateway
+# terminal 1 - sample protected API (real working demo data, not a mock of the gateway)
 cd backend
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+python demo_upstream.py              # listens on 0.0.0.0:9000
+
+# terminal 2 - gateway
+cd backend && source venv/bin/activate
 python main.py                       # listens on 0.0.0.0:8080
 
-# terminal 2 - dashboard
+# terminal 3 - dashboard
 cd frontend
 npm install
 cp .env.example .env                 # VITE_GATEWAY_URL / VITE_ADMIN_KEY must match the gateway
 npm run dev                          # http://localhost:5173
 ```
+
+Skipping `demo_upstream.py` doesn't break detection — every gateway decision (JWT,
+BOLA, BFLA, rate limiting, autonomous mitigation) is identical either way. It only
+means legitimate, allowed requests correctly forward and then 502, since there's
+nothing listening at `UPSTREAM_URL` to receive them.
 
 Redis and PostgreSQL are optional — the gateway falls back to in-memory state for
 both when they're unreachable (rate limits, BOLA ownership, and the audit log all
