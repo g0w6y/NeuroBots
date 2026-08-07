@@ -1,0 +1,19 @@
+# Build context hygiene. Without this, `docker build` ships the local venv,
+# node_modules and .git into the daemon on every build - which is both slow and
+# a correctness problem: a Windows/macOS venv copied into a Linux image contains
+# binaries that cannot run there, and a stale node_modules shadows the clean
+# `npm ci` the Dockerfile is trying to do.
+.git
+.gitignore
+**/.env
+**/venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+frontend/dist
+.demo-logs
+.demo-pids
+ml-worker/logs
+**/*.log
+BENCHMARK.md
