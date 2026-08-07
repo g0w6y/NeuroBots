@@ -15,10 +15,31 @@ from fastapi import FastAPI, Request
 
 app = FastAPI(title="NeuroBots Demo Upstream API")
 
+# Deliberately over-serving. Every account carries fields a client has no business
+# receiving - a password hash, a national id, a full card number, an internal note.
+# This is not a strawman: it is the single most common real-world API shape, where
+# the server returns its whole row and the mobile client is trusted to display only
+# part of it. The request for your own account is perfectly authorized; the
+# response still leaks. That gap is what OWASP calls API3, and what the gateway's
+# step-8 response inspection exists to catch - no change to this file required,
+# which is the point.
 ACCOUNTS = {
-    "1001": {"account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD"},
-    "1002": {"account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD"},
-    "1003": {"account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD"},
+    "1001": {
+        "account_id": "1001", "owner": "alice", "balance": 4520.10, "currency": "USD",
+        "password_hash": "$2b$12$K8fj2LmN9pQrS7tUvWxYz.demo",
+        "ssn": "512-88-4417",
+        "internal_note": "flagged for manual review 2026-07-02",
+    },
+    "1002": {
+        "account_id": "1002", "owner": "bob", "balance": 812.44, "currency": "USD",
+        "password_hash": "$2b$12$Zq7wE3rT5yU8iO1pA.demo",
+        "card_number": "4539-8821-0037-9915",
+    },
+    "1003": {
+        "account_id": "1003", "owner": "carol", "balance": 15300.00, "currency": "USD",
+        "password_hash": "$2b$12$Mn4bV6cX8zL2kJ5hG.demo",
+        "ssn": "409-22-7781",
+    },
 }
 
 TRANSACTIONS = {
