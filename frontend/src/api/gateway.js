@@ -73,4 +73,17 @@ export async function getMlStatus() {
   return response.data;
 }
 
+// Live decision stream (gateway: EventHub + @app.websocket("/ws/events")).
+//
+// The key goes in the query string rather than a header because a browser
+// cannot set headers on a WebSocket handshake - the gateway accepts both forms
+// for exactly that reason. That does put the admin key in the URL, where it can
+// reach proxy and server logs; it is the same key already sitting in this
+// bundle's VITE_ADMIN_KEY, so it is not a new exposure, but it is one more
+// reason the demo key must not survive into a real deployment.
+export function openEventStream() {
+  const base = GATEWAY_URL.replace(/^http/, 'ws').replace(/\/$/, '');
+  return new WebSocket(`${base}/ws/events?key=${encodeURIComponent(ADMIN_KEY)}`);
+}
+
 export { GATEWAY_URL };

@@ -1121,18 +1121,82 @@ async def revoke(payload: dict):
     return {"status": "revoked", **record}
 
 
+@app.post("/admin/ml-signal", dependencies=[Depends(require_admin)])
+async def ml_signal(request: Request):
+    """Transport for ml/worker.py when it has no Redis to share.
+
+    The worker prefers Redis, because that is the only path that works when
+    several gateway instances need the same score. This endpoint is the
+    fallback, and it exists because Redis was previously the *only* path: on
+    any machine without one - the normal case for a laptop demo - the whole ML
+    component computed nothing anybody could see, so the models may as well not
+    have existed. The gateway still never runs a model itself; it only records
+    what the worker computed, exactly as it records what the worker wrote to
+    Redis.
+
+    No new trust boundary: this takes the same X-Admin-Key that already permits
+    /admin/reset and /admin/revoke, so anyone able to reach it can already do
+    strictly more than nudge one soft signal. The score stays soft on arrival -
+    fuse_signals still requires a second, independent corroborating signal
+    before anything blocks, so a bogus 100 here cannot by itself block a user.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="body must be JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+
+    subject = str(payload.get("subject", "")).strip()
+    if not subject:
+        raise HTTPException(status_code=400, detail="subject is required")
+
+    raw_risk = payload.get("ml_risk")
+    ml_risk = None
+    if raw_risk is not None:
+        try:
+            # clamped rather than rejected: an out-of-range score is a worker
+            # bug, and dropping the whole update would lose the profile too
+            ml_risk = max(0, min(100, int(raw_risk)))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="ml_risk must be an integer 0-100")
+
+    profile = payload.get("profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    profile.setdefault("subject", subject)
+    if ml_risk is not None:
+        profile["ml_risk"] = ml_risk
+
+    ttl = payload.get("ttl_sec")
+    try:
+        ttl = int(ttl) if ttl is not None else 300
+    except (TypeError, ValueError):
+        ttl = 300
+    ttl = max(1, min(3600, ttl))
+
+    await store.publish_ml_signal(subject, ml_risk, profile, ttl)
+    return {"status": "recorded", "subject": subject, "ml_risk": ml_risk, "ttl_sec": ttl}
+
+
 @app.get("/admin/ml-status", dependencies=[Depends(require_admin)])
 async def ml_status():
     # read-only visibility into the ML worker (ml/worker.py) - a genuinely
     # separate process, this gateway never runs any model itself. Everything
-    # here comes from what that process actually wrote to the shared Redis;
-    # nothing is computed or guessed here. An empty list is a true, expected
-    # state (worker never run, or Redis unreachable), not an error.
+    # here is what that process actually reported, over Redis or over
+    # /admin/ml-signal; nothing is computed or guessed here. An empty list is a
+    # true, expected state (worker never started), not an error.
     profiles = await store.list_ml_profiles()
     trained = [p for p in profiles if p.get("has_model")]
     attackers = [p for p in profiles if p.get("known_attacker")]
     return {
-        "worker_reachable": store.connected and len(profiles) > 0,
+        # "has the worker actually reported anything", which is the question
+        # this field is read to answer. It was previously `store.connected and
+        # ...`, i.e. it reported False whenever Redis was down even if the
+        # worker was running and publishing over HTTP - the exact configuration
+        # this endpoint is most useful in.
+        "worker_reachable": len(profiles) > 0,
+        "transport": store.last_ml_source,
         "profiled_entities": len(profiles),
         "trained_models": len(trained),
         "known_attackers_excluded_from_training": len(attackers),

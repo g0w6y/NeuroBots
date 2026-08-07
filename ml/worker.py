@@ -49,6 +49,8 @@ class MLWorker:
         self.profiles: dict[str, EntityProfile] = {}
         self.graph = AccessGraph()
         self.redis_client = None
+        self.redis_ready = False
+        self.redis_announced = False
         self.last_processed_time = ""
         self.processed_count = 0
 
@@ -57,16 +59,74 @@ class MLWorker:
             self.profiles[subject] = EntityProfile(subject)
         return self.profiles[subject]
 
-    async def connect_redis(self):
-        while True:
-            try:
-                self.redis_client = await redis.from_url(settings.redis_url, decode_responses=True)
-                await self.redis_client.ping()
+    async def connect_redis(self) -> bool:
+        """Try for Redis, but never wait for it forever.
+
+        This used to be `while True: ... await asyncio.sleep(5)`, so with no
+        Redis reachable the worker parked in this loop and never reached run()'s
+        polling at all. On a machine with no Redis and no Docker - the ordinary
+        laptop case - that meant the IsolationForest, the Markov model and the
+        NetworkX graph never scored a single request, and start_all skipped
+        launching this process entirely. The models were real and the demo never
+        showed them.
+
+        Redis is still preferred and still the only transport that works across
+        multiple gateway instances; it is simply no longer a precondition for
+        starting. If it appears later, publish() picks it up on the next tick.
+        """
+        try:
+            client = await redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
+            await client.ping()
+            self.redis_client = client
+            if not self.redis_ready:
                 print("ML worker: Redis connected")
+            self.redis_ready = True
+            return True
+        except Exception as e:
+            if self.redis_ready or not self.redis_announced:
+                print(f"ML worker: Redis unavailable ({e}) - publishing to "
+                      f"{settings.gateway_url}/admin/ml-signal instead")
+                self.redis_announced = True
+            self.redis_client = None
+            self.redis_ready = False
+            return False
+
+    async def publish(self, client: httpx.AsyncClient, subject: str,
+                      ml_risk: int | None, profile: dict, ttl: int) -> None:
+        """One publish path, two transports, identical meaning.
+
+        Redis when it is there, the gateway's admin endpoint when it is not. A
+        failure on either is logged and dropped rather than raised: this worker
+        only ever *adds* a signal, so losing one update must never take the
+        process down or stall the poll loop.
+        """
+        if self.redis_ready and self.redis_client:
+            try:
+                if ml_risk is not None:
+                    await self.redis_client.setex(f"ml_risk:{subject}", ttl, str(ml_risk))
+                await self.redis_client.setex(f"profile:{subject}", ttl, json.dumps(profile))
                 return
             except Exception as e:
-                print(f"ML worker: Redis unavailable ({e}), retrying in 5s")
-                await asyncio.sleep(5)
+                print(f"ML worker: Redis write failed for {subject} ({e}) - falling back to HTTP")
+                self.redis_ready = False
+                self.redis_client = None
+
+        try:
+            resp = await client.post(
+                f"{settings.gateway_url}/admin/ml-signal",
+                headers={"X-Admin-Key": settings.admin_api_key},
+                json={"subject": subject, "ml_risk": ml_risk, "profile": profile, "ttl_sec": ttl},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                print(f"ML worker: gateway returned {resp.status_code} on /admin/ml-signal")
+        except Exception as e:
+            print(f"ML worker: could not publish {subject} ({e})")
 
     async def fetch_new_alerts(self, client: httpx.AsyncClient) -> list[dict]:
         try:
@@ -123,7 +183,7 @@ class MLWorker:
         self.graph.record_edge(subject, resource, object_id, now)
         profile.maybe_retrain()
 
-    async def score_and_publish(self, subject: str, now: float) -> None:
+    async def score_and_publish(self, client: httpx.AsyncClient, subject: str, now: float) -> None:
         # Two separate concerns, deliberately not gated by the same condition:
         # - profile:{subject} is written for ANY tracked entity, even with just
         #   1 sample - pure visibility/debugging (/admin/ml-status), proving
@@ -143,11 +203,7 @@ class MLWorker:
         profile_payload = {**profile.to_dict(), "updated_at": datetime.now(timezone.utc).isoformat() + "Z"}
 
         if not has_enough_data:
-            if self.redis_client:
-                try:
-                    await self.redis_client.setex(f"profile:{subject}", settings.profile_ttl_sec, json.dumps(profile_payload))
-                except Exception as e:
-                    print(f"ML worker: Redis write failed for {subject} ({e})")
+            await self.publish(client, subject, None, profile_payload, settings.profile_ttl_sec)
             return
 
         last = profile.requests[-1]
@@ -158,19 +214,26 @@ class MLWorker:
         ml_risk, breakdown = compute_ml_risk(isolation, markov, novelty)
         profile_payload.update({"ml_risk": ml_risk, "breakdown": breakdown})
 
-        if self.redis_client:
-            try:
-                await self.redis_client.setex(f"ml_risk:{subject}", settings.ml_risk_ttl_sec, str(ml_risk))
-                await self.redis_client.setex(f"profile:{subject}", settings.profile_ttl_sec, json.dumps(profile_payload))
-            except Exception as e:
-                print(f"ML worker: Redis write failed for {subject} ({e})")
+        await self.publish(client, subject, ml_risk, profile_payload, settings.ml_risk_ttl_sec)
 
     async def run(self):
         await self.connect_redis()
-        print(f"ML worker: polling {settings.gateway_url} every {settings.poll_interval_sec}s")
+        transport = "redis" if self.redis_ready else "http"
+        print(f"ML worker: polling {settings.gateway_url} every {settings.poll_interval_sec}s "
+              f"(publishing over {transport})")
+
+        # Retry Redis periodically instead of once at startup, so a Redis that
+        # comes up later is picked up without restarting this process. Counted
+        # in ticks rather than wall-clock so the dial cost stays off the hot path.
+        ticks = 0
+        retry_every = max(1, int(30 / max(0.1, settings.poll_interval_sec)))
 
         async with httpx.AsyncClient() as client:
             while True:
+                ticks += 1
+                if not self.redis_ready and ticks % retry_every == 0:
+                    await self.connect_redis()
+
                 new_alerts = await self.fetch_new_alerts(client)
                 now = time.time()
                 touched_subjects = set()
@@ -181,7 +244,8 @@ class MLWorker:
                     self.processed_count += 1
 
                 for subject in touched_subjects:
-                    await self.score_and_publish(subject, now)
+                    if subject:
+                        await self.score_and_publish(client, subject, now)
 
                 if new_alerts:
                     print(f"ML worker: processed {len(new_alerts)} new event(s), "

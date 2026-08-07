@@ -26,10 +26,22 @@ New-Item -ItemType Directory -Force $LogDir | Out-Null
 if (Test-Path $PidFile) { Remove-Item $PidFile }
 
 if (-not (Test-Path $Python)) {
-    Write-Host "No venv found. Creating one and installing backend requirements..." -ForegroundColor Yellow
+    Write-Host "No venv found. Creating one and installing requirements..." -ForegroundColor Yellow
     python -m venv (Join-Path $Root "backend\venv")
     & $Python -m pip install --quiet --upgrade pip
     & $Python -m pip install --quiet -r (Join-Path $Root "backend\requirements.txt")
+    # ml/requirements.txt too: step 3 runs the ML worker out of this same venv,
+    # and without scikit-learn/networkx it dies on import the moment it starts.
+    & $Python -m pip install --quiet -r (Join-Path $Root "ml\requirements.txt")
+} else {
+    # $LASTEXITCODE, not $?: for a native executable $? reports only whether the
+    # process launched, so it stays $true on a failed import and the install is
+    # skipped exactly when it is needed.
+    & $Python -c "import sklearn" *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Installing ML requirements into the existing venv..." -ForegroundColor Yellow
+        & $Python -m pip install --quiet -r (Join-Path $Root "ml\requirements.txt")
+    }
 }
 
 function Test-PortFree([int]$Port) {
@@ -87,27 +99,35 @@ $gw = Start-Process -FilePath $Python -ArgumentList "main.py" `
 "gateway:$($gw.Id)" | Add-Content $PidFile
 Wait-For "http://127.0.0.1:$GatewayPort/health" "gateway" | Out-Null
 
-Write-Host "=== 3/3 starting ML worker (needs real Redis) ===" -ForegroundColor Cyan
+Write-Host "=== 3/3 starting ML worker ===" -ForegroundColor Cyan
+# Started unconditionally. This used to be gated on the gateway reporting
+# Redis as "connected", which meant that on any machine without Redis - no
+# Docker, no local redis-server, i.e. the ordinary laptop - the worker was
+# never launched at all, and the IsolationForest / Markov / NetworkX models
+# scored nothing for the entire demo. The worker now prefers Redis and falls
+# back to publishing over the gateway's /admin/ml-signal endpoint, so it has
+# real work to do either way.
 $redisOk = $false
 try {
     $health = Invoke-RestMethod "http://127.0.0.1:$GatewayPort/health" -TimeoutSec 3
     $redisOk = $health.shared_store_redis -eq "connected"
 } catch {}
 
+$env:GATEWAY_URL = "http://127.0.0.1:$GatewayPort"
+if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://127.0.0.1:6379" }
+$ml = Start-Process -FilePath $Python -ArgumentList "-u", "worker.py" `
+    -WorkingDirectory (Join-Path $Root "ml") `
+    -RedirectStandardOutput (Join-Path $LogDir "ml_worker.log") `
+    -RedirectStandardError (Join-Path $LogDir "ml_worker.err.log") `
+    -NoNewWindow -PassThru
+"ml_worker:$($ml.Id)" | Add-Content $PidFile
+
 if ($redisOk) {
-    $env:GATEWAY_URL = "http://127.0.0.1:$GatewayPort"
-    if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://127.0.0.1:6379" }
-    $ml = Start-Process -FilePath $Python -ArgumentList "-u", "worker.py" `
-        -WorkingDirectory (Join-Path $Root "ml") `
-        -RedirectStandardOutput (Join-Path $LogDir "ml_worker.log") `
-        -RedirectStandardError (Join-Path $LogDir "ml_worker.err.log") `
-        -NoNewWindow -PassThru
-    "ml_worker:$($ml.Id)" | Add-Content $PidFile
-    Write-Host "  ML worker started (pid $($ml.Id)) - it only adds a signal, nothing depends on it" -ForegroundColor Green
+    Write-Host "  ML worker started (pid $($ml.Id)), publishing over Redis" -ForegroundColor Green
 } else {
-    Write-Host "  Redis not reachable from the gateway - skipping ML worker." -ForegroundColor Yellow
-    Write-Host "  Detection still works fully without it." -ForegroundColor Yellow
+    Write-Host "  ML worker started (pid $($ml.Id)) - no Redis, publishing over /admin/ml-signal" -ForegroundColor Green
 }
+Write-Host "  It only ever adds a signal; nothing in the request path depends on it." -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "=== up ===" -ForegroundColor Green
