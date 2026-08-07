@@ -1,5 +1,19 @@
 # NeuroBots ML Worker
 
+**This is the one ML implementation in this repo.** A second, independently-built
+one (`ml-worker/`, Melwin's) briefly existed alongside this folder and was removed
+2026-08-08 after a real comparison, not a coin flip: it wrote `ml_risk:{subject}` to
+Redis as a JSON blob, but `backend/store.py`'s `get_ml_risk()` does `int(val)` on
+that key — a format mismatch that would have made the signal silently go dark on
+every request (caught by the bare `except Exception: return None`), the same class
+of bug as the "control plane was inert" issue found and fixed earlier this session.
+It also defaulted to gateway port 8081, not this repo's actual 8080. This folder is
+the one `backend/main.py` and `backend/store.py` actually read from, and the one
+verified end to end against a real running stack. `ml-worker/` did have one genuine
+asset this folder lacked — a real 34-test pytest suite — ported below as
+`tests/test_ml.py`, rewritten against this module's actual API rather than the
+removed one's.
+
 Real machine learning, not a rename of the rule-based detector. Per `ML.md`'s original
 plan: a standalone async worker that trains a real `scikit-learn` `IsolationForest`
 per entity, builds a real Markov transition table for call sequences, and maintains a
@@ -106,6 +120,23 @@ protection is structural: `ml_anomaly` is always a soft signal. Alone, it can tr
 a step-up challenge, never a block — blocking requires a second, independent signal
 to agree first. Don't rely on threshold-tuning alone to fully solve small-sample
 noise; the corroboration requirement is the actual safety net, by design.
+
+## Testing
+
+```bash
+pip install -r requirements.txt   # includes pytest
+python3 -m pytest tests/ -v
+```
+
+32 real unit tests against this module's actual classes (`EntityProfile`,
+`AccessGraph`, `compute_ml_risk`, `MLWorker`) — not the removed `ml-worker/`'s
+parallel schema. Covers path parsing, profile accumulation, IsolationForest
+training gating, Markov transition scoring, graph novelty (including the
+shared-vs-private fan-in dampening from `ML.md` Part 5), risk fusion bounds,
+and — the property this whole worker exists to protect — the anti-poisoning
+guarantee: a confirmed hostile block stops that entity's later "allowed"
+traffic from ever being folded into training data again. All 32 pass as of
+2026-08-08 against a real run, not assumed.
 
 ## Config
 

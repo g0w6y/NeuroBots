@@ -3,3 +3,4 @@ networkx==3.3
 numpy==1.26.4
 redis==5.0.0
 httpx==0.25.2
+pytest==9.1.1
