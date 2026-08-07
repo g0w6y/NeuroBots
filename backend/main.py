@@ -288,6 +288,16 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
                     signals.append(enum_sig)
 
     # step 6: risk score (cached async anomaly, read-only, non-blocking)
+    # two INDEPENDENT soft signal sources are read here, deliberately not one:
+    # - control_plane_anomaly: the deterministic rule engine in agents.py
+    #   (thresholds like "8 distinct objects in 5s"), always running inside
+    #   this process
+    # - ml_anomaly: a genuinely separate process (ml/worker.py) with real
+    #   trained models - per-entity IsolationForest, a Markov transition
+    #   table, a NetworkX access graph - publishing to the same Redis
+    # Having two independent sources is what makes the "2+ soft signals
+    # required to block" corroboration rule in fuse_signals mean something -
+    # with only one source, that path could never be reached.
     enriched_risk = await control_plane.get_enriched_risk(subject)
     if enriched_risk and not enriched_risk.get("baseline_stats", {}).get("is_learning"):
         anomaly_score = enriched_risk.get("anomaly_score", 0.0)
@@ -302,6 +312,17 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
                 f"anomaly: {anomaly_reason}",
                 hard=False
             ))
+
+    ml_risk = await store.get_ml_risk(subject)
+    if ml_risk is not None and ml_risk > 40:
+        signals.append(Signal(
+            "ml_anomaly",
+            ml_risk,
+            "API6:2023 Unrestricted Access to Sensitive Business Flows",
+            "T1087 Account Discovery",
+            f"ML worker flagged behavioral anomaly (score {ml_risk}): IsolationForest + Markov sequence + graph novelty",
+            hard=False
+        ))
 
     # step 7: policy decision
     action = fuse_signals(signals)
