@@ -197,6 +197,44 @@ sample floor, but the real protection is structural: `ml_anomaly` is always a
 soft signal, never blocks alone. See `ml/README.md` for the full reasoning -
 don't rely on threshold-tuning alone to fix this class of noise.
 
+## Architecture documentation + real performance benchmark (2026-08-08)
+
+Closed the last two gaps the requirements cross-check had marked partial.
+
+**`ARCHITECTURE.md`** (repo root) — diagram-based, not prose duplicating
+MEMORY.md. Mermaid diagrams for the component graph, the 9-step flow, and
+the autonomous mitigation escalation sequence, plus an OWASP coverage table.
+Every detector name string in it was checked against the actual code before
+being written down, not assumed from memory — caught and fixed two wrong
+ones in the process (`bfla_violation` → actually `bfla_role_violation`,
+`shadow_endpoint_signal` → actually `shadow_endpoint_access`).
+
+**`backend/PERFORMANCE.md` + `backend/benchmark.py`** (new) — real
+concurrent throughput/latency, not just the single-threaded decision
+overhead `attack_sim/simulate.py` already measured. Headline: 101.4 req/s
+at 50 concurrent identities, 0 errors, end-to-end p50 15.6ms / p99 190ms.
+Gateway's own decision overhead stayed sub-millisecond throughout (p50
+0.05ms, p99 0.42ms, read from the audit log's server-side `latency_ms`) -
+proof the `<15ms` budget is met by a wide margin even under concurrent load.
+
+A first run at 150 concurrent identities produced an alarming p99 over 4
+seconds. Diagnosed properly before writing anything down, not assumed:
+checked the gateway's own server-side latency for those exact requests
+(still sub-millisecond - ruled out the zero-trust logic immediately), found
+and fixed a real issue (the gateway's upstream `httpx.AsyncClient` had no
+explicit connection pool limits, defaulting to httpx's `max_connections=100`
+- raised to 500/100 in `main.py`), then isolated the *remaining* tail by
+bypassing the gateway entirely and hitting `demo_upstream.py` directly with
+the same concurrency - it reproduced the same multi-second tail on its own.
+That toy, single-process, sync-handler dev server (never built or claimed to
+be load-tested - see its own docstring) is the actual ceiling, confirmed
+concurrency-dependent (20 concurrent → p99 54ms, 50 → 127ms, 100 → 2s+).
+Left alone deliberately - fixing it would mean building a production-grade
+stand-in for a component the deliverable doesn't require, this close to the
+deadline, to move a number that was never about the gateway's own logic.
+Full methodology and the "why two different latency numbers" explanation is
+in PERFORMANCE.md itself.
+
 ## Frontend connection + demo upstream
 
 Connected to the real dashboard (neurobots-frontend / NeuroBots repo's frontend/) this

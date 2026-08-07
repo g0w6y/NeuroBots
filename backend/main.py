@@ -159,7 +159,16 @@ async def security_headers_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event():
     global upstream_client
-    upstream_client = httpx.AsyncClient(timeout=10)
+    # httpx's default pool (max_connections=100, max_keepalive=20) is sized
+    # for a general-purpose client, not a gateway meant to front "thousands
+    # of entities" (ML.md) worth of concurrent traffic. Found via a real
+    # concurrency benchmark (benchmark.py): 150 concurrent identities produced
+    # a multi-second tail on the upstream round trip while the gateway's own
+    # decision logic stayed sub-millisecond throughout (proven separately via
+    # the audit log's server-recorded latency_ms) - this pool was queuing
+    # requests behind the scenes, not the zero-trust checks. Raised well past
+    # the demo's own concurrency ceiling.
+    upstream_client = httpx.AsyncClient(timeout=10, limits=httpx.Limits(max_connections=500, max_keepalive_connections=100))
     load_route_config()
     await store.connect()
     if store.connected:
