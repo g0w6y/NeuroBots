@@ -9,9 +9,27 @@ Nothing here is mocked. Every request is a real request over the wire; every
 verdict below is read off the gateway's own X-ZT-Decision response header. The
 simulator has no privileged view into the gateway and shares no state with it.
 
+CAUTION about --loop / repeated runs: phase_attacks deliberately fires every
+attack class from one real source IP, on purpose - phase 4 exists specifically
+to prove a barrage from your own machine doesn't collaterally block your own
+legitimate traffic, and that only holds if everything genuinely comes from one
+IP. But a single pass already produces ~9-10 hard, hostile-classified blocks
+(BOLA, alg=none, bad signature, malformed JWT, continued enumeration), which
+sits right at auto_block_ip_threshold (10 in 60s, config.py). Verified by
+running this file twice in a row against the same live gateway: the second
+run's own case 6 (expects "challenge") comes back "block" and an unrelated
+benign case (bob reading his own account) genuinely fails - not a detection
+bug, the gateway is correctly treating the *suite's own* repeated traffic as a
+coordinated attack from that IP and locking it out for 5-10 minutes. Run this
+suite exactly once per gateway process for a certification pass. Restart the
+gateway (or wait out the cooldown) before running it again. Don't use --loop
+against a gateway with real auto-mitigation enabled unless you've confirmed
+the interval is long enough, and the threshold high enough, to outlast its own
+traffic - as shipped, it isn't.
+
 Usage:
     python attack_sim/simulate.py              # one full pass, prints a scorecard
-    python attack_sim/simulate.py --loop       # repeat forever, for a live demo
+    python attack_sim/simulate.py --loop       # NOT safe as-is, see CAUTION above
     python attack_sim/simulate.py --gateway http://127.0.0.1:8080
 """
 
@@ -146,8 +164,16 @@ def phase_attacks(sim):
     #    "challenge", not "block": an expired session is a hard fact but a benign
     #    one, so policy asks for step-up re-authentication. The request still
     #    never reaches the upstream API, so nothing leaks either way.
+    #    Subject is unique per run, same reasoning as phase_behavioural's
+    #    analyst id below: this is the one case in the suite expecting
+    #    "challenge" rather than "block", so it's the one case a second
+    #    run's accumulated control-plane profile on a *reused* fixed identity
+    #    can silently push over the block threshold - not a wrong verdict,
+    #    just a misleading one for a single-purpose deterministic test.
+    #    Caught by running the suite twice in a row without restarting the
+    #    gateway; --loop does exactly that every --interval seconds.
     sim.case("attack", "6. Expired JWT replayed", "challenge",
-             "GET", "/api/accounts/1001", mint("carol", ttl=-3600))
+             "GET", "/api/accounts/1001", mint(f"carol_expired_{int(time.time())}", ttl=-3600))
 
     # 7. Token minted for a different issuer/audience — cross-environment replay.
     sim.case("attack", "7a. JWT from an untrusted issuer", "block",
@@ -182,6 +208,35 @@ def phase_attacks(sim):
             burst_caught = n
     sim.rows.append(("attack", f"9. Rate/burst abuse (caught at request #{burst_caught})",
                      "block", "block" if burst_caught else "allow", "-", 0.0, bool(burst_caught)))
+
+    # 11. SSRF — a webhook/callback field pointed at the cloud metadata
+    #     endpoint instead of a real external host. OWASP API7.
+    ssrf_actor = mint("ssrf_actor")
+    sim.case("attack", "11. SSRF via webhook_url to cloud metadata endpoint (API7)", "block",
+             "POST", "/api/transfers", ssrf_actor,
+             body={"from_account": "1001", "to_account": "1002", "amount": 10,
+                   "webhook_url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/"})
+
+    # 12. Excessive data exposure — alice (a real, seeded, non-admin owner)
+    #     reads her own account. The request is correctly allowed (she owns
+    #     it), but the response body must still have its ssn field masked
+    #     before it leaves the gateway. OWASP API3. This is the one case in
+    #     the suite that isn't just a decision check - it inspects the
+    #     actual response body security_checks.py redacted.
+    alice_plain = mint("alice", roles=["user"])
+    r, decision, risk, _, err = sim.send("GET", "/api/accounts/1001", alice_plain)
+    ssn_masked = False
+    detail = f"unreachable: {err}" if err else f"http {r.status_code if r else '?'}"
+    if r is not None and r.status_code == 200:
+        try:
+            ssn = r.json().get("ssn", "")
+            ssn_masked = "*" in ssn
+            detail = f"ssn={ssn!r}"
+        except Exception as exc:
+            detail = f"response not JSON ({exc})"
+    ok = (decision == "allow") and ssn_masked
+    sim.rows.append(("attack", f"12. Excessive data exposure — ssn masked for owner ({detail}) (API3)",
+                     "allow+masked", f"{decision}+{'masked' if ssn_masked else 'UNMASKED'}", risk, 0.0, ok))
 
 
 def phase_behavioural(sim):

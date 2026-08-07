@@ -16,6 +16,12 @@ from detect import Signal, check_bola, check_bfla, check_rate_limit, check_missi
 from agents import control_plane, generate_narrative
 from store import store
 from audit_log import audit_log
+from security_checks import (
+    inspect_response_body, excessive_exposure_signal,
+    scan_body_for_ssrf, ssrf_signal,
+    shadow_endpoint_signal, audit_config, SECURITY_HEADERS,
+)
+from executive_report import generate_executive_report
 
 
 def utc_iso(dt: datetime = None) -> str:
@@ -138,6 +144,18 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    # API8:2023 security misconfiguration - these headers cost nothing and
+    # apply to every response regardless of route, including error responses.
+    response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
+    if settings.tls_enabled:
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
+
 @app.on_event("startup")
 async def startup_event():
     global upstream_client
@@ -150,6 +168,14 @@ async def startup_event():
     await audit_log.connect()
     await load_ownership_seed()
     spawn(entity_sweeper())
+
+    warnings = audit_config(settings)
+    if warnings:
+        print(f"Config audit: {len(warnings)} warning(s)")
+        for w in warnings:
+            print(f"  - {w}")
+    else:
+        print("Config audit: clean")
 
 
 @app.on_event("shutdown")
@@ -500,7 +526,7 @@ async def escalate(key: str, reason: str, now: float) -> dict:
     return incident
 
 
-async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
+async def check_and_forward(request: Request) -> tuple[str, int, dict, object, object]:
     # perf_counter, not time.time(). time.time() on Windows has ~15.6ms
     # resolution, so a sub-millisecond decision measured with it quantises to
     # 0.0 or 15.6 - and "gateway overhead under 15ms" is the product's headline
@@ -560,7 +586,7 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
         latency_ms = (time.perf_counter() - start_time) * 1000
         alert = build_auto_block_alert(subject, ip, method, path, blocked_until, reason, latency_ms)
         emit_alert(alert)
-        return "block", 403, alert, None
+        return "block", 403, alert, None, None
 
     route_config, path_params = match_route(method, path)
     signals = []
@@ -572,6 +598,32 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
             missing_sig = check_missing_token(jwt_result.valid, route_config.get("require_auth", False))
             if missing_sig:
                 signals.append(missing_sig)
+
+    # API9:2023 improper inventory management - visibility only, never blocks
+    # alone (weight 30, well under the challenge threshold). This fires for a
+    # path under a protected prefix that has no entry in routes.json - it's
+    # already authenticated via UNLISTED_PROTECTED_ROUTE (route_config's
+    # "unlisted" marker), so this signal is purely about inventory
+    # completeness, not enforcement, which match_route's fail-closed fix
+    # already handles.
+    if route_config and route_config.get("unlisted"):
+        shadow_sig = shadow_endpoint_signal(path, subject)
+        if shadow_sig:
+            signals.append(shadow_sig)
+
+    # API7:2023 SSRF - scan request bodies for URLs pointing at private/
+    # internal addresses before ever forwarding them. Only meaningful for
+    # methods that carry a body.
+    if method in ("POST", "PUT", "PATCH"):
+        raw_body_for_ssrf = await request.body()
+        if raw_body_for_ssrf:
+            try:
+                parsed_body = json.loads(raw_body_for_ssrf)
+                ssrf_hits = scan_body_for_ssrf(parsed_body)
+                if ssrf_hits:
+                    signals.append(ssrf_signal(ssrf_hits, subject))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass  # not JSON - nothing to scan, not itself suspicious
 
     # step 3: rate limit (early, cheap, true sliding window)
     sustained_count = await store.count_requests_in_window(subject, now, settings.rate_limit_window_sec)
@@ -724,11 +776,11 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
     if action == "block":
         alert["status_code"] = 403
         emit_alert(alert)
-        return action, 403, alert, None
+        return action, 403, alert, None, None
     elif action == "challenge":
         alert["status_code"] = 401
         emit_alert(alert)
-        return action, 401, alert, None
+        return action, 401, alert, None, None
     else:
         body = await request.body()
         try:
@@ -740,13 +792,37 @@ async def check_and_forward(request: Request) -> tuple[str, int, dict, object]:
             )
             resp = await upstream_client.send(upstream_req)
             alert["status_code"] = resp.status_code
+
+            # API3:2023 excessive data exposure - inspect the actual response
+            # body for restricted fields and redact them before the client
+            # ever sees them. Runs regardless of the request-time decision
+            # above (correctly made before this response existed) - a
+            # separate, complementary safety net on the way out, not a
+            # re-judgment of the request. Only touches the body when there's
+            # actually something to redact; content-length is already
+            # stripped from the passthrough headers (UPSTREAM_STRIP_HEADERS),
+            # so gateway() below recomputes it correctly either way.
+            redacted_body = None
+            if resource and resp.headers.get("content-type", "").startswith("application/json"):
+                try:
+                    parsed = json.loads(resp.content)
+                    roles = jwt_result.roles if jwt_result.valid else []
+                    redacted, violations = inspect_response_body(resource, parsed, roles)
+                    if violations:
+                        redacted_body = json.dumps(redacted).encode()
+                        exposure_sig = excessive_exposure_signal(resource, violations, subject)
+                        if exposure_sig:
+                            alert["signals"].append(exposure_sig.to_dict())
+                except Exception:
+                    pass
+
             emit_alert(alert)
-            return action, resp.status_code, alert, resp
+            return action, resp.status_code, alert, resp, redacted_body
         except Exception as exc:
             alert["status_code"] = 502
             alert["explain"] += f" | upstream forward failed: {type(exc).__name__}: {exc}"
             emit_alert(alert)
-            return action, 502, alert, None
+            return action, 502, alert, None, None
 
 
 @app.get("/health")
@@ -914,9 +990,34 @@ async def ml_status():
     }
 
 
+@app.get("/admin/config-audit", dependencies=[Depends(require_admin)])
+async def config_audit():
+    # API8:2023 security misconfiguration - self-audit of this gateway's own
+    # configuration for exactly the mistakes most likely to matter (default
+    # secrets, permissive CORS, no TLS). Does not and cannot audit the
+    # upstream API's own configuration - no visibility into it from here.
+    warnings = audit_config(settings)
+    return {
+        "clean": len(warnings) == 0,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+        "tls_enabled": settings.tls_enabled,
+        "cors_allowed_origins": settings.cors_allowed_origins,
+    }
+
+
+@app.get("/admin/executive-report", dependencies=[Depends(require_admin)])
+async def executive_report():
+    # Deterministic aggregation of already-decided facts - see
+    # executive_report.py for why this is a template, not a live LLM call.
+    alerts = await audit_log.recent_alerts(limit=2000)
+    incidents = await audit_log.recent_incidents(limit=500)
+    return generate_executive_report(alerts, incidents)
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def gateway(request: Request):
-    action, status_code, alert, resp = await check_and_forward(request)
+    action, status_code, alert, resp, redacted_body = await check_and_forward(request)
 
     if action == "block":
         # BACKEND.md Part 5 calls for 429 on rate-limit denials, and the
@@ -973,8 +1074,13 @@ async def gateway(request: Request):
         }
         passthrough["X-ZT-Decision"] = action
         passthrough["X-ZT-Risk"] = str(alert["risk"])
+        # redacted_body (API3 excessive-data-exposure redaction, see
+        # check_and_forward) replaces the raw upstream body only when a
+        # restricted field was actually found and masked; otherwise the
+        # original bytes pass through untouched, preserving the transparency
+        # this passthrough was built for.
         return Response(
-            content=resp.content,
+            content=redacted_body if redacted_body is not None else resp.content,
             status_code=resp.status_code,
             headers=passthrough,
         )
@@ -984,16 +1090,22 @@ async def gateway(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Gateway: {settings.listen_addr}:{settings.listen_port}")
     # proxy_headers defaults to True with forwarded_allow_ips="127.0.0.1", which
     # means uvicorn rewrites request.client.host from X-Forwarded-For before the
     # application ever sees it - so hardening client_ip() alone is not enough,
     # the spoof has already been applied a layer below. Both layers must agree on
     # which peers are actually trusted proxies, and by default none are.
+    tls_kwargs = {}
+    if settings.tls_enabled:
+        print(f"Gateway (TLS): https://{settings.listen_addr}:{settings.listen_port}")
+        tls_kwargs = {"ssl_certfile": settings.tls_certfile, "ssl_keyfile": settings.tls_keyfile}
+    else:
+        print(f"Gateway: http://{settings.listen_addr}:{settings.listen_port} (TLS disabled - set TLS_ENABLED=true)")
     uvicorn.run(
         app,
         host=settings.listen_addr,
         port=settings.listen_port,
         proxy_headers=bool(trusted_proxies()),
         forwarded_allow_ips=",".join(trusted_proxies()) or None,
+        **tls_kwargs,
     )

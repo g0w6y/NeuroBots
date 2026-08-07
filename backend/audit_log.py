@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 from collections import deque
 from typing import Optional
 import asyncpg
@@ -51,9 +52,12 @@ class AuditLog:
     from the caller's perspective, wrapped so a DB failure never raises.
     """
 
+    RECONNECT_EVERY_SEC = 15.0
+
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
         self.connected = False
+        self._keeper: Optional[asyncio.Task] = None
         self._alerts_fallback = deque(maxlen=500)
         self._incidents_fallback = deque(maxlen=200)
         # The deques are a bounded *display* window; they are not a counter.
@@ -65,25 +69,67 @@ class AuditLog:
         self._totals = {"requests": 0, "block": 0, "challenge": 0, "allow": 0, "observe": 0}
         self._incident_total = 0
 
-    async def connect(self):
+    async def _dial(self) -> bool:
         try:
-            self.pool = await asyncpg.create_pool(
+            pool = await asyncpg.create_pool(
                 dsn=settings.database_url,
                 min_size=1,
                 max_size=5,
                 command_timeout=5,
                 timeout=3,
             )
-            async with self.pool.acquire() as conn:
+            async with pool.acquire() as conn:
                 await conn.execute(SCHEMA)
+            if self.pool:
+                try:
+                    await self.pool.close()
+                except Exception:
+                    pass
+            self.pool = pool
             self.connected = True
-            print("Audit Log: PostgreSQL connected, schema ensured")
-        except Exception as e:
-            print(f"Audit Log: PostgreSQL unavailable, using in-memory fallback ({e})")
+            return True
+        except Exception:
             self.pool = None
             self.connected = False
+            return False
+
+    async def connect(self):
+        ok = await self._dial()
+        print(f"Audit Log: PostgreSQL {'connected, schema ensured' if ok else 'unavailable, using in-memory fallback'}")
+        # Same principle as store.py's keeper: a Postgres outage must be
+        # loud and recoverable, not permanent until a gateway restart. Every
+        # write/read here already falls back to the in-memory deques when
+        # self.connected is False - this loop's only job is to notice when
+        # Postgres comes back and flip that flag.
+        self._keeper = asyncio.create_task(self._keeper_loop())
+
+    async def _keeper_loop(self):
+        while True:
+            try:
+                await asyncio.sleep(self.RECONNECT_EVERY_SEC)
+                if self.connected:
+                    try:
+                        async with self.pool.acquire() as conn:
+                            await conn.execute("SELECT 1")
+                        continue
+                    except Exception:
+                        self.connected = False
+                        print("Audit Log: PostgreSQL connection lost, will keep retrying")
+                if await self._dial():
+                    print("Audit Log: PostgreSQL reconnected")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"Audit Log: keeper tick failed ({type(e).__name__}: {e})")
 
     async def close(self):
+        if self._keeper:
+            self._keeper.cancel()
+            try:
+                await self._keeper
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._keeper = None
         if self.pool:
             try:
                 await self.pool.close()
