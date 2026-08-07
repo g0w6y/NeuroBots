@@ -41,15 +41,50 @@ An artifact defined the canonical 9-step flow and the multi-agent layer. Ground 
 | Rate limit (early) | Done. True sliding window, sustained + burst, Redis-backed with in-memory fallback. |
 | Extract features | Done. Route matching does real pattern extraction now (was broken — see Fixed Bugs). |
 | Authorize BOLA/BFLA | Done, with a disclosed gap — see BOLA ground truth below. |
-| Risk score (cached ML) | Done. Soft signal only, needs corroboration to block. |
+| Risk score (cached ML) | Done, and now actually reachable — see "Control plane was inert" below. Soft signal only; corroboration is enforced in `fuse_signals()` as of this session, it previously was not. |
 | Policy decision | Done. Hard signal → block. 2+ corroborating soft → block. Single soft → challenge. |
 | Enforce | Done. Was double-forwarding to upstream on every allowed request — fixed. |
 | Inspect response (API3) | **Not built.** No response-body inspection exists. Flagged, not faked. |
 | Emit event (async) | Done. Fire-and-forget, never blocks the response. Now durably persisted too — see audit_log.py in Architecture notes. |
 
-**Multi-agent layer:** profile, sequence, graph all done (agents.py). Guardian is done but deliberately **not a live LLM call** — deterministic narrative template over the Signal list, so a security verdict can never be hallucinated. That was a conscious choice, not a shortcut — an LLM writing security verdicts is exactly the wrong place to introduce hallucination risk.
+**Multi-agent layer:** profile, sequence, graph all done (agents.py) — and, as of
+2026-08-08, actually consumed by the request path rather than computed and
+discarded. Do not read the old "done" as "working"; it was implemented and inert. Guardian is done but deliberately **not a live LLM call** — deterministic narrative template over the Signal list, so a security verdict can never be hallucinated. That was a conscious choice, not a shortcut — an LLM writing security verdicts is exactly the wrong place to introduce hallucination risk.
 
 **Autonomous mitigation:** built on top of the reference flow, not in it originally. The system had no memory of a proven attacker between requests until this was added — entity.blocked existed as a field but nothing ever set it. Now: 3 confirmed *hostile* violations from a verified identity within 60s → cooldown (self-expiring, progressive on repeat offenses). Source IP escalates too, but at a much higher threshold (10, not 3) specifically to avoid punishing users sharing a NAT/proxy with an attacker.
+
+## Control plane was inert, and fixing it exposed a second bug (2026-08-08)
+
+Both found by running the real app and reading the alerts it produced, not by inspection.
+
+**1. The whole multi-agent layer never reached a decision.** `get_enriched_risk()`
+returned `None` outright whenever Redis was unreachable — which is the *documented
+default* configuration, since Redis is optional everywhere else. So the profile,
+sequence and graph agents computed anomaly scores once a second and nothing ever
+read them. Step 6 of the 9-step flow was a no-op in every demo anyone has run.
+Evidence: `control_plane_anomaly` fired **0 times across 69 alerts**, in a run that
+included an 8-object enumeration and a 30-request burst — traffic the sequence and
+volume detectors both score 75–85. The deterministic checks caught all of it
+anyway, which is exactly why this never surfaced as a missed detection; it surfaced
+as a headline feature contributing nothing. Fixed with a local cache mirroring the
+Redis one, the same degrade-to-memory pattern `store.py` and `audit_log.py` use.
+
+**2. A single heuristic could block a real user.** This only became reachable once
+(1) was fixed. The documented policy is "hard → block; 2+ corroborating soft →
+block; single soft → challenge", but `fuse_signals()` never encoded the
+corroboration rule — it compared the fused score against the block threshold, and
+both live soft detectors peak above it (sequence 80, volume 75). Verified against
+the running gateway: a legitimate subject that merely sped up (22 req/10s against
+its usual 5 — under the 25/3s burst limit *and* the 120/60s sustained limit,
+nothing forged, nothing it did not own) produced a bare `control_plane_anomaly`
+and 11 challenged requests. Had the anomaly scored 5 points higher it would have
+been 11 blocks. `fuse_signals()` now requires either a hard signal or 2+ soft
+signals before `block` is reachable; a lone inference caps at `challenge`.
+
+Note that `attack_sim/simulate.py` reports 0 false positives either way — its
+legitimate phases never vary their pace, so they never exercise the behavioural
+layer at all. A clean scorecard from that suite is not evidence about this class
+of bug.
 
 ## Two real false positives found in autonomous mitigation, both fixed
 
