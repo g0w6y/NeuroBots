@@ -1,0 +1,10 @@
+{
+  "account": {
+    "1001": ["alice"],
+    "1002": ["bob"],
+    "1003": ["carol"]
+  },
+  "transfer": {
+    "tr_demo_001": ["alice"]
+  }
+}

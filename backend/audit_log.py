@@ -56,6 +56,14 @@ class AuditLog:
         self.connected = False
         self._alerts_fallback = deque(maxlen=500)
         self._incidents_fallback = deque(maxlen=200)
+        # The deques are a bounded *display* window; they are not a counter.
+        # Deriving lifetime totals from len(deque) meant "total requests",
+        # "allowed" and "blocked" all silently froze the moment the 500th request
+        # landed - and a burst-rate-limit demo crosses 500 in seconds, so the
+        # headline tiles stop moving exactly when the attack gets interesting.
+        # These counters are monotonic and independent of the window.
+        self._totals = {"requests": 0, "block": 0, "challenge": 0, "allow": 0, "observe": 0}
+        self._incident_total = 0
 
     async def connect(self):
         try:
@@ -84,6 +92,10 @@ class AuditLog:
 
     async def write_alert(self, alert: dict) -> None:
         self._alerts_fallback.append(alert)
+        self._totals["requests"] += 1
+        decision = alert.get("decision", "")
+        if decision in self._totals:
+            self._totals[decision] += 1
         if not self.connected:
             return
         try:
@@ -111,6 +123,7 @@ class AuditLog:
 
     async def write_incident(self, incident: dict) -> None:
         self._incidents_fallback.append(incident)
+        self._incident_total += 1
         if not self.connected:
             return
         try:
@@ -140,13 +153,17 @@ class AuditLog:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT ts, subject, ip, method, path, decision, risk, signals, explain, narrative, latency_ms, status_code
+                    SELECT id, ts, subject, ip, method, path, decision, risk, signals, explain, narrative, latency_ms, status_code
                     FROM alerts ORDER BY ts DESC LIMIT $1
                     """,
                     limit,
                 )
             return [
                 {
+                    # keep the same "a<n>" id shape the in-memory path emits, so
+                    # the dashboard's row identity does not change meaning
+                    # depending on whether Postgres happens to be up
+                    "id": f"a{r['id']}",
                     "time": r["ts"].isoformat(),
                     "subject": r["subject"],
                     "ip": r["ip"],
@@ -165,16 +182,18 @@ class AuditLog:
         except Exception:
             return list(self._alerts_fallback)[-limit:]
 
+    def _fallback_counts(self) -> dict:
+        return {
+            "requests": self._totals["requests"],
+            "blocked": self._totals["block"],
+            "challenged": self._totals["challenge"],
+            "allowed": self._totals["allow"] + self._totals["observe"],
+            "incidents": self._incident_total,
+        }
+
     async def counts(self) -> dict:
         if not self.connected:
-            alerts = self._alerts_fallback
-            return {
-                "requests": len(alerts),
-                "blocked": sum(1 for a in alerts if a["decision"] == "block"),
-                "challenged": sum(1 for a in alerts if a["decision"] == "challenge"),
-                "allowed": sum(1 for a in alerts if a["decision"] in ("allow", "observe")),
-                "incidents": len(self._incidents_fallback),
-            }
+            return self._fallback_counts()
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch("SELECT decision, count(*) AS c FROM alerts GROUP BY decision")
@@ -188,14 +207,7 @@ class AuditLog:
                 "incidents": incident_count or 0,
             }
         except Exception:
-            alerts = self._alerts_fallback
-            return {
-                "requests": len(alerts),
-                "blocked": sum(1 for a in alerts if a["decision"] == "block"),
-                "challenged": sum(1 for a in alerts if a["decision"] == "challenge"),
-                "allowed": sum(1 for a in alerts if a["decision"] in ("allow", "observe")),
-                "incidents": len(self._incidents_fallback),
-            }
+            return self._fallback_counts()
 
     async def recent_incidents(self, limit: int = 200) -> list:
         if not self.connected:

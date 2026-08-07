@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     bola_strict_mode: bool = False
     ownership_seed_file: str = "seed_ownership.json"
 
+    # Comma-separated peer addresses whose X-Forwarded-For header is believed.
+    # Empty by default, which means the socket peer is always used. The client
+    # address decides the anon identity, the rate-limit bucket and the IP
+    # cooldown key, so believing an unvalidated header hands all three to the
+    # caller. Set this to your load balancer's address when you deploy behind one.
+    trusted_proxies: str = ""
+
     # demo-mode default: permissive so the frontend can connect from any dev host/port
     # (varies by laptop, LAN IP, Vite port) without per-machine config during the
     # hackathon. The actual access boundary on every /admin/* route is the X-Admin-Key

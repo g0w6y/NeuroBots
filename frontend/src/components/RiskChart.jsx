@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid } from 'recharts';
 
 const PIE_COLORS = { allowed: '#5fa86f', challenged: '#c98a3c', blocked: '#c85c4a' };
@@ -11,7 +12,7 @@ const tooltipStyle = {
   color: '#ede9e4'
 };
 
-export default function RiskChart({ metrics }) {
+function RiskChart({ metrics }) {
   const timeseries = metrics?.timeseries ?? [];
   const pieData = [
     { name: 'allowed', value: metrics?.allowed ?? 0 },
@@ -23,15 +24,16 @@ export default function RiskChart({ metrics }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
       <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
-        <h3 className="mb-3 font-display text-sm font-semibold text-ink">Allowed vs. blocked — last hour</h3>
+        <h3 className="mb-3 font-display text-sm font-semibold text-ink">Decisions over time — last 2 minutes</h3>
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={timeseries}>
             <CartesianGrid stroke="#211f1c" vertical={false} />
-            <XAxis dataKey="time" stroke="#6b655c" fontSize={10} tickLine={false} axisLine={false} />
-            <YAxis stroke="#6b655c" fontSize={10} tickLine={false} axisLine={false} width={24} />
+            <XAxis dataKey="time" stroke="#6b655c" fontSize={10} tickLine={false} axisLine={false} interval={3} />
+            <YAxis stroke="#6b655c" fontSize={10} tickLine={false} axisLine={false} width={24} allowDecimals={false} />
             <Tooltip contentStyle={tooltipStyle} />
-            <Line type="monotone" dataKey="allowed" stroke="#5fa86f" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="blocked" stroke="#c85c4a" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="allowed" stroke="#5fa86f" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="challenged" stroke="#c98a3c" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="blocked" stroke="#c85c4a" strokeWidth={2} dot={false} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -63,3 +65,5 @@ export default function RiskChart({ metrics }) {
     </div>
   );
 }
+
+export default memo(RiskChart);
