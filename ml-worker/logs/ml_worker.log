@@ -1,2 +1,0 @@
-2026-08-07 13:59:29 | INFO     | ml_worker.worker | Starting NeuroBots ML Worker
-2026-08-07 13:59:30 | INFO     | ml_worker.event_consumer | EventConsumer started, polling http://127.0.0.1:8081/admin/alerts every 2.0s

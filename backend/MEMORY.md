@@ -11,6 +11,15 @@ was taken as the new base and every addition below was replayed on top of it,
 then re-verified against *his* code, not re-assumed from earlier testing
 against mine. His changes fixed real bugs mine had not caught:
 
+Melwin also independently pushed a second ML implementation (`ml-worker/`,
+top-level, sibling to `ml/`) during this same window. Resolved 2026-08-08
+(see `ml/README.md` for the full comparison): `ml-worker/` wrote
+`ml_risk:{subject}` as a JSON blob against `store.py`'s `int(val)` read, and
+defaulted to the wrong gateway port (8081 vs this repo's actual 8080) —
+never actually wired in or compatible as shipped. Removed after porting its
+one real asset (a 34-test pytest suite) into `ml/tests/test_ml.py`, rewritten
+against `ml/`'s actual classes. `ml/` remains the single ML implementation.
+
 - `auth.py`: a JWT with no `exp` claim was previously treated as valid
   forever; now a hard `jwt_no_expiry` signal (weight 85). `aud` is compared
   correctly whether the claim is a string or an array (RFC 7519). `roles` is
