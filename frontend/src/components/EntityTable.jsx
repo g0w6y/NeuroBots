@@ -57,7 +57,7 @@ function EntityTable({ entities }) {
   );
 
   return (
-    <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
+    <div className="glass-panel rounded-lg p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="font-display text-sm font-semibold text-ink">Entities by risk</h3>
         <label className="sr-only" htmlFor="entity-filter">Filter entities by subject</label>

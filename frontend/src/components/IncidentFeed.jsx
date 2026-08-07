@@ -12,7 +12,7 @@ function timeAgo(ts) {
 
 export default function IncidentFeed({ incidents }) {
   return (
-    <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
+    <div className="glass-panel rounded-lg p-4">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-display text-sm font-semibold text-ink">Autonomous mitigation</h3>
         <span className="font-mono text-[10px] uppercase tracking-wide text-ink-faint">

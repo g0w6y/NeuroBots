@@ -23,7 +23,7 @@ function RiskChart({ metrics }) {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
-      <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
+      <div className="glass-panel rounded-lg p-4">
         <h3 className="mb-3 font-display text-sm font-semibold text-ink">Decisions over time — last 2 minutes</h3>
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={timeseries}>
@@ -38,7 +38,7 @@ function RiskChart({ metrics }) {
         </ResponsiveContainer>
       </div>
 
-      <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
+      <div className="glass-panel rounded-lg p-4">
         <h3 className="mb-3 font-display text-sm font-semibold text-ink">Decision split</h3>
         <div className="flex items-center gap-4">
           <ResponsiveContainer width={120} height={120}>

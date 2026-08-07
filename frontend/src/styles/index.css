@@ -8,29 +8,57 @@
 
 body {
   margin: 0;
-  background-color: #131211;
-  background-image:
-    linear-gradient(rgba(237, 233, 228, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(237, 233, 228, 0.025) 1px, transparent 1px);
-  background-size: 32px 32px;
-  color: #ede9e4;
-  font-family: 'IBM Plex Sans', sans-serif;
+  background-color: #131315;
+  color: #e5e1e4;
+  font-family: 'Hanken Grotesk', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+@layer components {
+  /* The ProjectZero panel treatment: a translucent slab over the tactical grid,
+     so the grid reads through the chrome and the page keeps depth without
+     resorting to drop shadows. */
+  .glass-panel {
+    background-color: rgba(24, 24, 27, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .tactical-grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .label-caps {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 12px;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+}
+
+.text-glow-danger {
+  text-shadow: 0 0 10px rgba(255, 180, 171, 0.45);
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #131211;
+  background: #0e0e10;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c2925;
-  border-radius: 4px;
+  background: #353437;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a362f;
+  background: #424754;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -39,9 +67,14 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  .glass-panel {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background-color: #201f22;
+  }
 }
 
 :focus-visible {
-  outline: 2px solid #4fb3a4;
+  outline: 2px solid #adc6ff;
   outline-offset: 2px;
 }
