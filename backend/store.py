@@ -47,6 +47,27 @@ class SharedStore:
         self._escalation_counts = defaultdict(int)
         self._last_touch = {}
 
+        # ML worker output, mirrored locally so the ML signal survives having no
+        # Redis at all. subject -> (value, expires_at); the expiry mirrors the
+        # TTL the worker would have set on the Redis key, so a score that stops
+        # being refreshed decays out of existence here exactly as it would there.
+        self._ml_risk: dict = {}
+        self._ml_profiles: dict = {}
+        # Which transport actually delivered the profiles served last. Reported
+        # by /admin/ml-status, so it has to describe where the data came from
+        # rather than merely whether Redis happens to be dialable - those two
+        # answers differ exactly when the worker is publishing over HTTP while
+        # the gateway holds an otherwise-empty Redis connection.
+        self.last_ml_source = "none"
+
+        # jti -> revocation record. Entries self-expire at the token's own `exp`,
+        # so this cannot grow past the number of tokens live at any one moment.
+        self._revoked = {}
+        # Fallback TTL for a token whose exp we could not read. Deliberately
+        # generous: erring long keeps a revoked credential dead, erring short
+        # brings it back to life.
+        self._default_revocation_ttl = 24 * 3600
+
         self._degraded_announced = False
         self._keeper: Optional[asyncio.Task] = None
 
@@ -117,6 +138,10 @@ class SharedStore:
         for key, until in list(self._block_state.items()):
             if now >= until:
                 del self._block_state[key]
+        for bucket in (self._ml_risk, self._ml_profiles):
+            for subject, (_, expires) in list(bucket.items()):
+                if now >= expires:
+                    del bucket[subject]
         if stale:
             print(f"Shared Store: swept {len(stale)} idle subjects")
 
@@ -284,49 +309,254 @@ class SharedStore:
 
     # --------------------------------------------------------------------- ml
 
+    async def publish_ml_signal(self, subject: str, ml_risk: Optional[int], profile: dict, ttl: int) -> None:
+        """Record what ml/worker.py computed for one subject.
+
+        Called two ways, and deliberately identical in effect either way:
+        the worker writes to Redis directly when it has one, and POSTs to
+        /admin/ml-signal when it does not. Redis was originally the *only*
+        transport, which meant the entire ML component - IsolationForest,
+        Markov sequences, the NetworkX access graph - silently produced nothing
+        on any machine without a Redis to share. That is the common case for a
+        laptop demo, so the headline ML feature was reliably invisible exactly
+        when someone was watching. The models are real either way; only the
+        transport between the two processes changed.
+
+        Write-through to memory is unconditional, same rule as ownership: the
+        local mirror has to stay authoritative if Redis disappears mid-run.
+        `ml_risk` may be None - the worker publishes a profile for any tracked
+        entity (visibility) but a score only once it has enough samples to mean
+        anything, and that distinction has to survive the trip.
+        """
+        expires = time.time() + max(1, ttl)
+        if ml_risk is not None:
+            self._ml_risk[subject] = (int(ml_risk), expires)
+        self._ml_profiles[subject] = (profile, expires)
+
+        if self.connected:
+            try:
+                if ml_risk is not None:
+                    await self.redis_client.setex(f"ml_risk:{subject}", ttl, str(int(ml_risk)))
+                await self.redis_client.setex(f"profile:{subject}", ttl, json.dumps(profile))
+            except Exception as e:
+                self._degrade("publish_ml_signal", e)
+
     async def get_ml_risk(self, subject: str) -> Optional[int]:
-        # written by the separate ml/worker.py process (ml.md), never by this
-        # process. if it's unreachable, that just means no ML signal is
-        # available this request - there's no in-memory fallback here, the
-        # worker's whole design depends on shared Redis, and the gateway must
-        # still work perfectly with zero ML signal if that process isn't running.
-        if not self.connected:
+        # Written by the separate ml/worker.py process (ML.md), never by this
+        # one. Redis first when it is available, because that is the only path
+        # that works across multiple gateway instances; the in-memory mirror
+        # covers the single-process demo where no Redis exists.
+        #
+        # None means "no ML opinion available", which stays a completely normal
+        # state: the gateway must decide correctly with zero ML signal, and
+        # nothing here is ever allowed to become a dependency of the request
+        # path.
+        if self.connected:
+            try:
+                val = await self.redis_client.get(f"ml_risk:{subject}")
+                if val is not None:
+                    return int(val)
+            except Exception as e:
+                self._degrade("get_ml_risk", e)
+
+        entry = self._ml_risk.get(subject)
+        if not entry:
             return None
-        try:
-            val = await self.redis_client.get(f"ml_risk:{subject}")
-            return int(val) if val is not None else None
-        except Exception:
+        score, expires = entry
+        if time.time() >= expires:
+            # expiry is enforced on read as well as in the sweep, so a stale
+            # score can never outlive its TTL just because the sweep is due
+            self._ml_risk.pop(subject, None)
             return None
+        return score
 
     async def list_ml_profiles(self, limit: int = 200) -> list:
-        # read-only visibility into what the ML worker has actually built -
-        # for /admin/ml-status. Uses SCAN, not KEYS, so this never blocks
-        # Redis regardless of keyspace size. Returns [] (not an error) if
-        # Redis is unreachable or the worker has never run - both are valid,
-        # expected states, not failures.
-        if not self.connected:
-            return []
-        profiles = []
-        try:
-            cursor = 0
-            seen = 0
-            while True:
-                cursor, keys = await self.redis_client.scan(cursor, match="profile:*", count=100)
-                for key in keys:
-                    val = await self.redis_client.get(key)
-                    if val:
-                        try:
-                            profiles.append(json.loads(val))
-                        except Exception:
-                            pass
-                    seen += 1
-                    if seen >= limit:
-                        return profiles
-                if cursor == 0:
-                    break
-        except Exception:
-            return profiles
-        return profiles
+        # Read-only visibility into what the ML worker has actually built, for
+        # /admin/ml-status. Merges both transports rather than picking one, for
+        # the same reason list_ownership does: with Redis connected the worker
+        # may have written through both, and reading one would under-report.
+        # SCAN, never KEYS, so this cannot block Redis at any keyspace size.
+        # An empty list is a true, expected state (worker never started), not
+        # an error.
+        now = time.time()
+        merged: dict = {}
+        redis_hits = 0
+
+        for subject, (payload, expires) in list(self._ml_profiles.items()):
+            if now >= expires:
+                self._ml_profiles.pop(subject, None)
+                continue
+            merged[subject] = payload
+        local_hits = len(merged)
+
+        if self.connected:
+            try:
+                cursor = 0
+                seen = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(cursor, match="profile:*", count=100)
+                    for key in keys:
+                        val = await self.redis_client.get(key)
+                        if val:
+                            try:
+                                payload = json.loads(val)
+                                merged[payload.get("subject", key)] = payload
+                                redis_hits += 1
+                            except Exception:
+                                pass
+                        seen += 1
+                        if seen >= limit:
+                            break
+                    if seen >= limit or cursor == 0:
+                        break
+            except Exception as e:
+                self._degrade("list_ml_profiles", e)
+
+        if redis_hits:
+            self.last_ml_source = "redis"
+        elif local_hits:
+            self.last_ml_source = "http (/admin/ml-signal)"
+        else:
+            self.last_ml_source = "none"
+
+        return list(merged.values())[:limit]
+
+    # ------------------------------------------------------------- revocation
+
+    async def revoke_token(self, jti: str, exp: float, reason: str = "") -> dict:
+        """Add a token id to the denylist until its own expiry.
+
+        The TTL is the token's remaining lifetime, not a fixed window. A revoked
+        token that has expired on its own is already rejected by the expiry
+        check, so keeping its jti after that point grows the denylist forever
+        without adding any protection - this is the difference between a
+        denylist that stays small and one that becomes an operational problem.
+
+        Written through to memory unconditionally, same as ownership, so the
+        denylist stays authoritative if Redis disappears mid-flight. Revocation
+        failing open is the one outcome that must never happen quietly.
+        """
+        now = time.time()
+        ttl = max(1, int(exp - now)) if exp else self._default_revocation_ttl
+        record = {"jti": jti, "revoked_at": now, "expires_at": exp or (now + ttl), "reason": reason}
+        self._revoked[jti] = record
+
+        if self.connected:
+            try:
+                await self.redis_client.setex(f"revoked:{jti}", ttl, json.dumps(record))
+            except Exception as e:
+                self._degrade("revoke_token", e)
+        return record
+
+    async def is_revoked(self, jti: str) -> bool:
+        if not jti:
+            return False
+
+        # Memory first and always: it is a plain dict lookup, it cannot fail, and
+        # checking it before Redis means a Redis outage cannot turn a revoked
+        # token back into a valid one for anything revoked by this process.
+        record = self._revoked.get(jti)
+        if record:
+            if record["expires_at"] > time.time():
+                return True
+            # self-expired; drop it so the local map does not grow unbounded
+            self._revoked.pop(jti, None)
+
+        if self.connected:
+            try:
+                return bool(await self.redis_client.exists(f"revoked:{jti}"))
+            except Exception as e:
+                self._degrade("is_revoked", e)
+        return False
+
+    async def list_revoked(self, limit: int = 500) -> list:
+        now = time.time()
+        live = {
+            jti: r for jti, r in self._revoked.items() if r["expires_at"] > now
+        }
+        if self.connected:
+            try:
+                cursor = 0
+                seen = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(cursor, match="revoked:*", count=100)
+                    for key in keys:
+                        val = await self.redis_client.get(key)
+                        if val:
+                            try:
+                                r = json.loads(val)
+                                live.setdefault(r.get("jti", key.split(":", 1)[-1]), r)
+                            except Exception:
+                                pass
+                        seen += 1
+                        if seen >= limit:
+                            cursor = 0
+                            break
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                self._degrade("list_revoked", e)
+        return sorted(live.values(), key=lambda r: r.get("revoked_at", 0), reverse=True)
+
+    async def list_ownership(self, limit: int = 1000) -> list:
+        """Every object-ownership grant currently in force, for /admin/ownership.
+
+        Read-only visibility into the data BOLA decisions are actually made
+        against - the Access Control page exists so that "who owns what" is
+        inspectable rather than being an invisible set of Redis keys.
+
+        The in-memory map is always merged in, not used only as a fallback:
+        grant_ownership() writes through to memory unconditionally, so with
+        Redis connected the two are both authoritative and reading only one of
+        them would under-report. SCAN, never KEYS, for the same reason as
+        list_ml_profiles.
+        """
+        merged: dict = {}
+
+        for resource, objects in self._owned_objects.items():
+            for object_id, subjects in objects.items():
+                if subjects:
+                    merged.setdefault((resource, object_id), set()).update(subjects)
+
+        if self.connected:
+            try:
+                cursor = 0
+                seen = 0
+                while True:
+                    cursor, keys = await self.redis_client.scan(
+                        cursor, match="authorized:*", count=100
+                    )
+                    for key in keys:
+                        # authorized:{resource}:{object_id} - split from the left
+                        # twice only, since an object id may itself contain ':'
+                        parts = key.split(":", 2)
+                        if len(parts) != 3:
+                            continue
+                        _, resource, object_id = parts
+                        members = await self.redis_client.smembers(key)
+                        if members:
+                            merged.setdefault((resource, object_id), set()).update(members)
+                        seen += 1
+                        if seen >= limit:
+                            cursor = 0
+                            break
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                self._degrade("list_ownership", e)
+
+        return sorted(
+            (
+                {
+                    "resource": resource,
+                    "object_id": object_id,
+                    "owners": sorted(subjects),
+                    "fan_in": len(subjects),
+                }
+                for (resource, object_id), subjects in merged.items()
+            ),
+            key=lambda g: (g["resource"], g["object_id"]),
+        )
 
     # ------------------------------------------------------------------ admin
 
