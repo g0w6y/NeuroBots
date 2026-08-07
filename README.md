@@ -24,12 +24,39 @@ change and no redeploy. Anything under a protected prefix that is *not* listed
 still requires a valid token; listing it is what adds authorization on top of
 authentication. Point `ROUTE_CONFIG_FILE` at a different file to override.
 
-## Fastest way to run it: one command
+## Fastest way to run it: Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Brings up Redis, PostgreSQL, the vulnerable demo API, the gateway, the ML worker
+and the dashboard. Dashboard on http://127.0.0.1:3000, gateway on
+http://127.0.0.1:8080. `docker compose down` to stop (`-v` also wipes the
+volumes).
+
+`./scripts/demo.sh` does that plus health-waits, runs the attack suite and the
+benchmark, and opens the dashboard.
+
+See `docs/DEPLOYMENT.md` before running this anywhere that is not your laptop —
+the default `JWT_SECRET` and `ADMIN_API_KEY` are demo values.
+
+## Without Docker: one command
 
 ```bash
 REDIS_URL=redis://127.0.0.1:6379 ./start_all.sh    # demo upstream + gateway + ML worker
 cd frontend && npm run dev                          # dashboard, in its own terminal
 ./stop_all.sh                                        # when done
+```
+
+On Windows use the PowerShell equivalents, which also create the venv and
+install backend requirements on first run:
+
+```powershell
+.\start_all.ps1                                     # or -GatewayPort 18080 -UpstreamPort 19000
+cd frontend; npm run dev
+.\stop_all.ps1
 ```
 
 `REDIS_URL` is optional — omit it and everything still works, just without the ML
@@ -109,6 +136,15 @@ work either way; only cross-restart persistence and multi-instance sharing need
 the real services). CORS defaults to permissive for local demo convenience — the
 actual access boundary on every `/admin/*` route is the `X-Admin-Key` header, not
 CORS; lock `CORS_ALLOWED_ORIGINS` down before any real deployment.
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| `docs/ARCHITECTURE.md` | how the pieces fit, the decision pipeline, trust boundaries |
+| `docs/TESTING.md` | running the attack suite, contract check and benchmark — and reading a bad result |
+| `docs/DEPLOYMENT.md` | production checklist, scaling, known gaps |
+| `BENCHMARK.md` | latest measured latency and throughput (regenerate with `scripts/benchmark.py`) |
 
 See `backend/README.md` and `backend/MEMORY.md` for the gateway's full status,
 every bug found and fixed with why it mattered, and what's genuinely still open.

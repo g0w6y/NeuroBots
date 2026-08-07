@@ -23,6 +23,8 @@ allowed request actually gets back.
 ## Core Features
 
 - JWT validation (signature, expiry, issuer, audience, alg=none defense)
+- Token revocation (`jti` denylist, checked after signature verification, self-expiring)
+- Response inspection (OWASP API3: over-serving, cross-tenant and bulk data exposure)
 - BOLA detection (object ownership tracking, provisionable ahead of traffic)
 - BFLA detection (role-based access control)
 - Rate limiting (per-identity, true sliding window, sustained + burst)
@@ -52,7 +54,12 @@ All require header `X-Admin-Key` matching `ADMIN_API_KEY`.
 - GET /admin/alerts - Recent decisions (Postgres-backed when configured, else last 500 in memory)
 - GET /admin/incidents - Autonomous escalation events
 - GET /admin/entities - Per-entity profiles
+- GET /admin/routes - The route table actually being enforced, with per-route
+  BOLA/BFLA coverage flags and a `source` field naming where it was loaded from
+- GET /admin/ownership - Every ownership grant in force, with fan-in per object
 - POST /admin/ownership - Provision real object ownership ahead of traffic
+- GET /admin/revocations - Token ids on the denylist (self-expiring)
+- POST /admin/revoke - Kill a session by `jti`; dead on its next request
 
 ## Configuration
 

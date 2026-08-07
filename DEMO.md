@@ -96,12 +96,17 @@ another), and during a live demo a delayed "Redis connected" line reads as
 "broken" when it's actually just buffered. All three commands in this guide
 already include `-u` for that reason.
 
-Expect immediately: `ML worker: Redis connected` then `ML worker: polling
-http://127.0.0.1:8080 every 2.0s`.
+Expect immediately, with Redis reachable: `ML worker: Redis connected` then
+`ML worker: polling http://127.0.0.1:8080 every 2.0s`.
 
-**If Redis isn't reachable, don't bother starting this one** — it'll retry
-forever and add nothing. Detection works completely without it; it's a
-second, independent signal, never a dependency.
+**Without Redis** the worker now falls back to publishing scores directly to
+the gateway over HTTP (`POST /admin/ml-signal`) instead of writing to Redis
+— expect `ML worker: Redis unavailable ... - publishing to
+http://127.0.0.1:8080/admin/ml-signal instead`. Verified end to end on a
+genuinely Redis-less run: `/admin/ml-status` still showed real profiled
+entities and a real trained model. Either way it's a second, independent
+signal, never a dependency — the gateway works identically with this
+process not running at all.
 
 ### Terminal 6 — Frontend dashboard
 
@@ -183,12 +188,16 @@ still fully functional, just without durability or the ML signal).
 
 ## Running without Docker
 
-Everything still works with zero Redis/Postgres — skip terminals 1, 2, and
-5 entirely. The gateway logs "using in-memory fallback" for both and every
-detection still works exactly the same for a single process. What you lose:
-durable audit history across restarts, the ML risk signal, and correctness
-under `WORKERS > 1` (see `DEPLOYMENT.md` — multi-worker mode specifically
-requires Redis).
+Everything still works with zero Redis — skip terminal 1 (and 2, if you
+also don't want durable audit history). The gateway logs "using in-memory
+fallback" and every detection works exactly the same for a single process.
+The ML worker (terminal 5) still works too — it falls back to publishing
+scores straight to the gateway over HTTP instead of via Redis, verified end
+to end. What you actually lose without Redis: durable audit history across
+restarts (without Postgres specifically), and correctness under
+`WORKERS > 1` (see `DEPLOYMENT.md` — multi-worker mode specifically
+requires Redis for the gateway's own BOLA/rate-limit/escalation state,
+independent of whichever path the ML worker is using).
 
 ## Known caveat, disclosed not hidden
 

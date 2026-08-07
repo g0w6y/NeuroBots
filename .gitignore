@@ -7,4 +7,7 @@ node_modules/
 dist/
 .demo-logs/
 .demo-pids
+# redis-server writes its snapshot into whatever directory it was launched from,
+# which is the repo root when Redis is started for a local demo.
+dump.rdb
 backend/certs/

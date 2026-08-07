@@ -1,4 +1,9 @@
+import { useMemo, useState } from 'react';
 import { useLiveData } from '../hooks/useLiveData.js';
+import LogsView from './LogsView.jsx';
+import ApiInventory from './ApiInventory.jsx';
+import AccessControl from './AccessControl.jsx';
+import ThreatHunt from './ThreatHunt.jsx';
 import RiskGauge from './RiskGauge.jsx';
 import ThreatFeed from './ThreatFeed.jsx';
 import RiskChart from './RiskChart.jsx';
@@ -15,20 +20,34 @@ function Icon({ name, className = '' }) {
   );
 }
 
-// Only Overview is backed by real gateway endpoints. The other sections exist in
-// the ProjectZero design but have no data behind them in this gateway, so they
-// render as explicitly unavailable rather than as links to an empty page or, worse,
-// a page of invented numbers. The whole point of this console is that everything on
-// it came from the gateway.
+// Every section is now backed by real gateway data:
+//   Overview        /admin/{metrics,alerts,entities,incidents}
+//   Threat Hunt     deterministic correlation over the live alert window
+//   API Inventory   /admin/routes joined against observed paths
+//   Access Control  /admin/ownership (GET + POST) and /admin/entities
+//   Logs            /admin/alerts, full window
+//
+// The original rule still holds and is worth restating: nothing on this console
+// is invented. Where a capability genuinely does not exist - the LangChain
+// summarisation layer PRODUCT.md proposes - the page says so plainly instead of
+// rendering generated prose that reads like analysis.
 const NAV = [
-  { icon: 'dashboard', label: 'Overview', active: true },
-  { icon: 'radar', label: 'Threat Hunt' },
-  { icon: 'api', label: 'API Inventory' },
-  { icon: 'lock_person', label: 'Access Control' },
-  { icon: 'terminal', label: 'Logs' }
+  { id: 'overview', icon: 'dashboard', label: 'Overview' },
+  { id: 'hunt', icon: 'radar', label: 'Threat Hunt' },
+  { id: 'inventory', icon: 'api', label: 'API Inventory' },
+  { id: 'access', icon: 'lock_person', label: 'Access Control' },
+  { id: 'logs', icon: 'terminal', label: 'Logs' }
 ];
 
-function SideNav({ connectionState }) {
+const VIEW_SUBTITLE = {
+  overview: 'Live gateway state',
+  hunt: 'Correlation over the live alert window',
+  inventory: 'Enforced routes vs. observed traffic',
+  access: 'Ownership grants, roles and cooldowns',
+  logs: 'Full audit log'
+};
+
+function SideNav({ connectionState, transport, view, onNavigate, counts }) {
   return (
     <nav className="fixed left-0 top-0 z-40 hidden h-full w-60 flex-col border-r border-white/10 bg-canvas-sunken py-6 md:flex">
       <div className="mb-8 px-4">
@@ -37,28 +56,37 @@ function SideNav({ connectionState }) {
       </div>
 
       <div className="flex flex-1 flex-col gap-1 px-2">
-        {NAV.map((item) =>
-          item.active ? (
-            <span
-              key={item.label}
-              aria-current="page"
-              className="flex items-center gap-3 rounded border-r-2 border-accent bg-accent/10 px-4 py-2 font-mono text-[13px] text-accent"
+        {NAV.map((item) => {
+          const current = item.id === view;
+          const badge = counts?.[item.id];
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onNavigate(item.id)}
+              aria-current={current ? 'page' : undefined}
+              className={`flex items-center gap-3 rounded px-4 py-2 text-left font-mono text-[13px] transition-colors ${
+                current
+                  ? 'border-r-2 border-accent bg-accent/10 text-accent'
+                  : 'text-ink-faint hover:bg-canvas-raised/60 hover:text-ink-muted'
+              }`}
             >
               <Icon name={item.icon} className="text-[18px]" />
               {item.label}
-            </span>
-          ) : (
-            <span
-              key={item.label}
-              title="No gateway data source — not built"
-              className="flex cursor-not-allowed items-center gap-3 rounded px-4 py-2 font-mono text-[13px] text-ink-faint/50"
-            >
-              <Icon name={item.icon} className="text-[18px]" />
-              {item.label}
-              <span className="ml-auto font-mono text-[9px] uppercase tracking-caps text-ink-faint/40">n/a</span>
-            </span>
-          )
-        )}
+              {badge ? (
+                <span
+                  className={`ml-auto rounded px-1.5 py-0.5 font-mono text-[9px] tabular-nums ${
+                    badge.tone === 'danger'
+                      ? 'bg-risk-danger-dim/60 text-risk-danger'
+                      : 'bg-canvas-raised text-ink-faint'
+                  }`}
+                >
+                  {badge.value}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
 
       <div className="mt-auto space-y-3 border-t border-white/10 px-4 pt-4">
@@ -66,7 +94,7 @@ function SideNav({ connectionState }) {
           <div className="label-caps mb-1 text-ink-faint">Gateway</div>
           <div className="break-all font-mono text-[11px] text-ink-muted">{GATEWAY_URL}</div>
         </div>
-        <ConnectionBadge state={connectionState} />
+        <ConnectionBadge state={connectionState} transport={transport} />
       </div>
     </nav>
   );
@@ -97,24 +125,53 @@ function StatCard({ label, value, icon, tone = 'default', foot, alert }) {
 }
 
 export default function Dashboard() {
-  const { alerts, metrics, entities, incidents, connectionState, lastError } = useLiveData();
+  const { alerts, allAlerts, metrics, entities, incidents, connectionState, lastError, transport } = useLiveData();
+  const [view, setView] = useState('overview');
 
-  const blockRate = metrics?.block_rate ?? 0;
-  const risk = metrics?.overall_risk ?? 0;
+  // Sidebar badges. Only surfaced where the number is actionable - a blocked
+  // count on Logs and a cooldown count on Access Control both mean "look here";
+  // a route count on Inventory would just be decoration.
+  const counts = useMemo(() => {
+    const blocked = allAlerts.filter((a) => a.decision === 'block').length;
+    const cooling = entities.filter((e) => e.status === 'blocked').length;
+    return {
+      logs: blocked ? { value: blocked, tone: 'danger' } : null,
+      access: cooling ? { value: cooling, tone: 'danger' } : null
+    };
+  }, [allAlerts, entities]);
 
   return (
     <div className="min-h-screen tactical-grid">
-      <SideNav connectionState={connectionState} />
+      <SideNav connectionState={connectionState} transport={transport} view={view} onNavigate={setView} counts={counts} />
 
       <header className="fixed top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/10 bg-canvas/80 px-4 backdrop-blur-md md:pl-[256px] md:pr-8">
         <div>
-          <h2 className="font-display text-lg font-semibold tracking-tight text-ink">Threat Console</h2>
+          <h2 className="font-display text-lg font-semibold tracking-tight text-ink">
+            {NAV.find((n) => n.id === view)?.label || 'Threat Console'}
+          </h2>
           <p className="font-mono text-[10px] text-ink-faint">
-            Live gateway state · polling every {(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s
+            {VIEW_SUBTITLE[view]} ·{' '}
+            {transport === 'websocket'
+              ? 'streaming decisions over /ws/events'
+              : `polling every ${(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s`}
           </p>
         </div>
-        <div className="md:hidden">
-          <ConnectionBadge state={connectionState} />
+        <div className="flex items-center gap-2">
+          {/* The sidebar is hidden below md, so without this the only way to
+              change section on a phone would be to widen the window. */}
+          <select
+            value={view}
+            onChange={(e) => setView(e.target.value)}
+            className="rounded border border-canvas-line bg-canvas-sunken px-2 py-1 font-mono text-[11px] text-ink md:hidden"
+            aria-label="Section"
+          >
+            {NAV.map((n) => (
+              <option key={n.id} value={n.id}>{n.label}</option>
+            ))}
+          </select>
+          <div className="md:hidden">
+            <ConnectionBadge state={connectionState} transport={transport} />
+          </div>
         </div>
       </header>
 
@@ -135,6 +192,17 @@ export default function Dashboard() {
           </div>
         )}
 
+        {view === 'hunt' && <ThreatHunt alerts={allAlerts} entities={entities} />}
+        {view === 'inventory' && <ApiInventory alerts={allAlerts} />}
+        {view === 'access' && <AccessControl entities={entities} incidents={incidents} />}
+        {view === 'logs' && (
+          <div className="h-[calc(100vh-140px)]">
+            <LogsView alerts={allAlerts} />
+          </div>
+        )}
+
+        {view === 'overview' && (
+        <>
         {/* telemetry row */}
         <section className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <StatCard
@@ -213,6 +281,8 @@ export default function Dashboard() {
         </section>
 
         <EntityTable entities={entities} />
+        </>
+        )}
       </main>
     </div>
   );
@@ -259,7 +329,7 @@ function DecisionBar({ metrics }) {
   );
 }
 
-function ConnectionBadge({ state }) {
+function ConnectionBadge({ state, transport }) {
   const map = {
     connecting: { color: 'bg-ink-faint', label: 'Connecting', pulse: false },
     live: { color: 'bg-risk-safe', label: 'Live', pulse: true },
@@ -267,10 +337,16 @@ function ConnectionBadge({ state }) {
     error: { color: 'bg-risk-danger', label: 'Gateway unreachable', pulse: false }
   };
   const s = map[state] || map.connecting;
+  // "Live" meant a 2-second poll for as long as this badge has existed. Naming
+  // the transport keeps the claim honest in both directions: pushed means the
+  // gateway's WebSocket is delivering decisions as they happen, polled means it
+  // is not and the feed is up to VITE_POLL_INTERVAL behind.
+  const detail = state === 'live' ? (transport === 'websocket' ? 'pushed' : 'polled') : null;
   return (
     <span className="flex w-fit items-center gap-2 rounded-full border border-white/10 bg-canvas-panel px-3 py-1.5 font-mono text-[11px] text-ink-muted">
       <span className={`h-2 w-2 rounded-full ${s.color} ${s.pulse ? 'animate-breathe' : ''}`} />
       {s.label}
+      {detail && <span className="text-ink-faint">· {detail}</span>}
     </span>
   );
 }

@@ -1,0 +1,141 @@
+# NeuroBots - full stack, one command:
+#
+#   docker compose up --build
+#
+# Brings up: Redis, PostgreSQL, the intentionally-vulnerable demo API, the
+# gateway that protects it, the ML worker, and the dashboard.
+#
+# No `version:` key - it has been obsolete since Compose v2 and current versions
+# emit a warning for it.
+
+name: neurobots
+
+services:
+  # ------------------------------------------------------------------ storage
+  redis:
+    image: redis:7-alpine
+    # Persist to disk so escalation cooldowns and ownership grants survive a
+    # restart. The gateway works without Redis (in-memory fallback), but the ML
+    # worker genuinely needs it: it is a separate process and Redis is the only
+    # channel through which its signal reaches the gateway.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: neurobots
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-neurobots}
+      POSTGRES_DB: neurobots
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -U matters: without it pg_isready checks the `root` role, which does not
+      # exist here, so the check fails forever and the gateway never starts.
+      test: ["CMD-SHELL", "pg_isready -U neurobots -d neurobots"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ------------------------------------------------- the API being protected
+  # Intentionally vulnerable: no auth, no ownership checks. The whole point is
+  # that the gateway protects it without a single line of it being changed.
+  # NOT published to the host by default - exposing it would let anyone bypass
+  # the gateway entirely and read every account, which rather undermines the
+  # demo. Uncomment the ports block if you want to prove it is vulnerable.
+  demo-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "demo_upstream.py"]
+    # ports:
+    #   - "9000:9000"
+    healthcheck:
+      # Overrides the gateway healthcheck baked into the shared image, which
+      # probes :8080 - a port this container does not serve.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/api/accounts/1001', timeout=2).status==200 else 1)\""]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://neurobots:${POSTGRES_PASSWORD:-neurobots}@postgres:5432/neurobots
+      REDIS_URL: redis://redis:6379
+      UPSTREAM_URL: http://demo-api:9000
+      JWT_SECRET: ${JWT_SECRET:-demo-hs256-secret-change-me}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-changeme-admin-key}
+      LISTEN_ADDR: 0.0.0.0
+      LISTEN_PORT: 8080
+      # The dashboard is served from a different origin (:3000) than the gateway
+      # (:8080), so the browser needs this. The real boundary on /admin/* is the
+      # X-Admin-Key header - lock this to a fixed origin list before any
+      # deployment that is not a local demo.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      demo-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- ML worker
+  ml:
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      GATEWAY_URL: http://gateway:8080
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-changeme-admin-key}
+    depends_on:
+      redis:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- dashboard
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Build args, not environment - Vite bakes VITE_* into the bundle at
+        # build time. And this must be an address the BROWSER can reach, so it
+        # is the host-published 127.0.0.1:8080, not the internal http://gateway.
+        # Change it here and rebuild (`docker compose up --build frontend`);
+        # setting it at runtime has no effect.
+        VITE_GATEWAY_URL: ${VITE_GATEWAY_URL:-http://127.0.0.1:8080}
+        VITE_ADMIN_KEY: ${ADMIN_API_KEY:-changeme-admin-key}
+        VITE_POLL_INTERVAL: "2000"
+    ports:
+      - "3000:8080"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
