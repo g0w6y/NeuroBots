@@ -28,7 +28,7 @@ Databases: Redis and PostgreSQL.
 
 Deployment: Docker and Docker Compose.
 
-Standards: OWASP API Top 10 and MITRE ATT&CK.
+Standards: OWASP API Top 10 and MITRE ATT&CK..
 
 ## Business Impact
 
