@@ -2,7 +2,8 @@
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection Platform
 
-## Problem Statement Understanding
+## Problem Statement Understanding..
+
 
 Almost every app today talks to other software through APIs. An API is just the doorway a website or mobile app uses to ask a server for data, such as your bank balance, your medical record or your order history. Because these doorways carry valuable data, attackers now go straight for them.
 
