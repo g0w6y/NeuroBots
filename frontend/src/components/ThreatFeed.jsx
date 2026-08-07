@@ -109,7 +109,7 @@ function Row({ alert }) {
 
 function ThreatFeed({ alerts }) {
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-md border border-canvas-line bg-canvas-panel">
+    <div className="glass-panel flex h-full flex-col overflow-hidden rounded-lg">
       <div className="flex items-center justify-between border-b border-canvas-line px-4 py-3">
         <h2 className="font-display text-sm font-semibold text-ink">
           Request log <span className="font-mono text-[10px] font-normal text-ink-faint">· click a row for the full reasoning</span>

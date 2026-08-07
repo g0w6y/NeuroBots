@@ -19,7 +19,7 @@ function severity(count) {
 
 export default function MitreMatrix({ counts = {} }) {
   return (
-    <div className="rounded-md border border-canvas-line bg-canvas-panel p-4">
+    <div className="glass-panel rounded-lg p-4">
       <h3 className="mb-3 font-display text-sm font-semibold text-ink">MITRE ATT&amp;CK matrix</h3>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
         {TECHNIQUES.map((t) => {
