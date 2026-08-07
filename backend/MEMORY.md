@@ -235,6 +235,54 @@ deadline, to move a number that was never about the gateway's own logic.
 Full methodology and the "why two different latency numbers" explanation is
 in PERFORMANCE.md itself.
 
+## Horizontal scaling verified for real + secure deployment gate (2026-08-08)
+
+Closed the last two "partial" items from the requirements cross-check.
+
+**Horizontal scaling.** `main.py` couldn't actually run multi-worker before
+this - `uvicorn.run(app, ...)` was passed an already-built app object, which
+uvicorn rejects for `workers > 1` (needs an import string so each worker
+process can import its own copy). Added `WORKERS` setting; `workers > 1` now
+switches to `uvicorn.run("main:app", workers=N, ...)`.
+
+Verified with real `WORKERS=3` against real Docker Redis + Postgres - and
+caught a real methodology bug in the process worth remembering: the first
+test pass used a single reused `httpx.Client` connection for every request,
+which pins to whichever one worker process happened to accept that
+connection first. It "passed" even with Redis pointed at an unreachable
+address, which should be impossible - the false pass was the tell. Redone
+with a fresh `Connection: close` request each time to force real
+distribution across all 3 processes, then every result flipped to what it
+should honestly show:
+- Rate limit burst test (25/3s), real Redis: tripped at exactly request #26,
+  matching a single-process result precisely - one shared counter, not three.
+- Same test, Redis unreachable: tripped at #45 - genuinely diverged, each
+  worker's in-memory fallback is process-local as expected.
+- BOLA ownership and identity-level auto-escalation: both confirmed correctly
+  shared across all 3 processes via Redis (escalation incident durably
+  recorded via Postgres, independent of which worker handled which request).
+
+One real limitation found, disclosed, not fixed: `EventHub`'s WebSocket
+subscriber set (`/ws/events`) is in-process Python state, so live push
+doesn't fan out across workers - a dashboard's socket only sees whichever
+single worker it's pinned to. The REST polling fallback is unaffected (reads
+from Postgres, identical across workers). Needs a Redis pub/sub backplane to
+fix properly - scoped as a real follow-up in DEPLOYMENT.md, not attempted
+this close to the deadline since polling already covers the same data.
+
+**Secure deployment.** Added a fail-closed startup gate:
+`REQUIRE_PRODUCTION_SECRETS=true` makes the gateway refuse to start (exit
+code 3) if any of the 5 already-flagged insecure defaults (JWT secret, admin
+key, DB credentials, wildcard CORS, TLS disabled) are still in place, instead
+of just logging a warning that's easy to miss in a deploy pipeline. Verified
+both directions for real: refuses to start with defaults in place, starts
+clean over real HTTPS once all 5 are rotated (`/admin/config-audit` reports
+`"clean": true`). `DEPLOYMENT.md` (new, repo root) is the actual hardening
+checklist - secret rotation table, secrets-manager integration boundary
+(no code changes needed, everything already reads from env vars via
+pydantic - verified nothing bypasses that), network exposure guidance,
+trusted-proxies config for a real load balancer.
+
 ## Frontend connection + demo upstream
 
 Connected to the real dashboard (neurobots-frontend / NeuroBots repo's frontend/) this

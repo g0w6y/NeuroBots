@@ -186,6 +186,24 @@ async def startup_event():
     else:
         print("Config audit: clean")
 
+    # Fail-closed production gate. audit_config() has been flagging insecure
+    # defaults since it was added, but flagging is not enforcement - a
+    # startup log line is easy to miss in a deploy pipeline, and the gateway
+    # ran on regardless either way. REQUIRE_PRODUCTION_SECRETS=true makes
+    # "insecure defaults still in place" a startup failure instead of a
+    # warning, for exactly one environment: a deployment that has explicitly
+    # declared itself production. Off by default so local dev/demo needs no
+    # setup - the same principle used for tls_enabled and every other
+    # opt-in-hardening flag in this file.
+    if settings.require_production_secrets and warnings:
+        print()
+        print("FATAL: REQUIRE_PRODUCTION_SECRETS=true but insecure defaults are still in place:")
+        for w in warnings:
+            print(f"  - {w}")
+        print("Refusing to start. Rotate the values above, or unset REQUIRE_PRODUCTION_SECRETS")
+        print("if this really is a local demo. See DEPLOYMENT.md.")
+        raise SystemExit(1)
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1315,11 +1333,25 @@ if __name__ == "__main__":
         tls_kwargs = {"ssl_certfile": settings.tls_certfile, "ssl_keyfile": settings.tls_keyfile}
     else:
         print(f"Gateway: http://{settings.listen_addr}:{settings.listen_port} (TLS disabled - set TLS_ENABLED=true)")
-    uvicorn.run(
-        app,
+
+    run_kwargs = dict(
         host=settings.listen_addr,
         port=settings.listen_port,
         proxy_headers=bool(trusted_proxies()),
         forwarded_allow_ips=",".join(trusted_proxies()) or None,
         **tls_kwargs,
     )
+
+    if settings.workers > 1:
+        # Multiprocess workers each import their own copy of the app, so
+        # uvicorn requires an import string here, not the already-built
+        # object above (passing the object raises "You must pass the
+        # application as an import string to enable 'workers'"). Verified
+        # 2026-08-08: this mode is only correct with Redis reachable - each
+        # worker otherwise keeps independent in-memory state and BOLA/rate
+        # limits/escalation silently diverge between them. See MEMORY.md.
+        print(f"Gateway: starting {settings.workers} worker processes "
+              f"(WORKERS={settings.workers}) - requires Redis for shared state")
+        uvicorn.run("main:app", workers=settings.workers, **run_kwargs)
+    else:
+        uvicorn.run(app, **run_kwargs)
