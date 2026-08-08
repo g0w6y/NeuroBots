@@ -119,6 +119,36 @@ def check_enumeration(distinct_count: int, threshold: int = 8) -> Optional[Signa
         )
     return None
 
+def resource_hardening_signal(resource: str, hardened_until: float, now: float) -> Optional[Signal]:
+    """Autonomous API hardening (bonus): a resource that's currently under this
+    state has seen enough DISTINCT confirmed attackers recently that the
+    system has, on its own, temporarily raised the bar for touching it at
+    all - see store.py's record_resource_attack for the trigger and the
+    anti-gaming reasoning behind it.
+
+    Weight is deliberately low (well under the default 45 challenge
+    threshold): this signal alone must never be enough to challenge a real,
+    otherwise-unremarkable user of a resource under attack from someone
+    else - that would let one attacker manufacture friction for everyone
+    else on that resource, exactly the collateral-damage failure mode this
+    whole project has guarded against everywhere else (see the identity vs
+    IP escalation threshold split). Alone it only elevates the risk score
+    into "observe" - visible in the audit trail, corroborating evidence if
+    something else about this specific request is also off, never a
+    standalone reason to interrupt someone.
+    """
+    if not resource or hardened_until <= now:
+        return None
+    remaining = int(hardened_until - now)
+    return Signal(
+        "resource_hardening_active",
+        15,
+        "API6:2023 Unrestricted Access to Sensitive Business Flows",
+        "T1499 Endpoint Denial of Service",
+        f"resource '{resource}' autonomously hardened for {remaining}s more after sustained attack from multiple distinct sources",
+        hard=False
+    )
+
 def risk_score(signals: List[Signal]) -> int:
     """Fuse signal weights into a single 0-100 risk score.
 

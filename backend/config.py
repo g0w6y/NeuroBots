@@ -33,6 +33,15 @@ class Settings(BaseSettings):
 
     auto_block_ip_threshold: int = 10
 
+    # Autonomous API hardening (bonus): distinct from auto-mitigation above,
+    # which punishes a proven attacker. This raises a RESOURCE's own bar
+    # when enough distinct attackers (not just one, repeatedly) hit it
+    # within the window - see detect.py's resource_hardening_signal and
+    # store.py's record_resource_attack for the full anti-gaming reasoning.
+    resource_hardening_distinct_attackers: int = 3
+    resource_hardening_window_sec: int = 300
+    resource_hardening_cooldown_sec: int = 180
+
     bola_strict_mode: bool = False
     ownership_seed_file: str = "seed_ownership.json"
     route_config_file: str = "routes.json"

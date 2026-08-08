@@ -47,6 +47,10 @@ class SharedStore:
         self._escalation_counts = defaultdict(int)
         self._last_touch = {}
 
+        # autonomous resource hardening - see the block near record_resource_attack
+        self._resource_attackers = defaultdict(dict)
+        self._hardened_resources = {}
+
         # ML worker output, mirrored locally so the ML signal survives having no
         # Redis at all. subject -> (value, expires_at); the expiry mirrors the
         # TTL the worker would have set on the Redis key, so a score that stops
@@ -306,6 +310,80 @@ class SharedStore:
                 self._degrade("increment_escalation_count", e)
         self._escalation_counts[key] += 1
         return self._escalation_counts[key]
+
+    # ------------------------------------------------ autonomous resource hardening
+    #
+    # The auto-mitigation above punishes a proven *attacker* - one identity or
+    # IP. It has nothing to say about a *resource* under sustained attack from
+    # many different attackers, each of whom individually might never cross
+    # their own identity/IP threshold. This tracks DISTINCT attacker keys
+    # hitting one resource type (not raw event count - one identity blocked 20
+    # times in a row is still the same attacker, and identity-level escalation
+    # already handles them). Deliberately keyed on the exact same `attacker_key`
+    # convention main.py already uses for identity/IP escalation (subject if
+    # the JWT validated, else ip:{ip}) - a forged/invalid token never produces
+    # a validated subject, so an attacker cannot cheaply manufacture "distinct
+    # attackers" by putting a different `sub` claim in a new alg=none token
+    # each time; every one of those still collapses to the same ip:{ip} key.
+    # Genuinely reaching this bar needs either real distinct source IPs or
+    # real, validly-signed tokens for different subjects - both substantially
+    # more expensive than editing a JWT payload.
+
+    async def record_resource_attack(self, resource: str, attacker_key: str, now: float, window_sec: int) -> int:
+        self._touch(f"resource:{resource}")
+        if self.connected:
+            try:
+                rkey = f"resattackers:{resource}"
+                await self.redis_client.zadd(rkey, {attacker_key: now})
+                await self.redis_client.zremrangebyscore(rkey, 0, now - window_sec)
+                await self.redis_client.expire(rkey, window_sec)
+                return await self.redis_client.zcard(rkey)
+            except Exception as e:
+                self._degrade("record_resource_attack", e)
+        bucket = self._resource_attackers[resource]
+        bucket[attacker_key] = now
+        cutoff = now - window_sec
+        self._resource_attackers[resource] = {k: t for k, t in bucket.items() if t >= cutoff}
+        return len(self._resource_attackers[resource])
+
+    async def set_resource_hardened(self, resource: str, hardened_until: float, cooldown_sec: int) -> None:
+        if self.connected:
+            try:
+                await self.redis_client.set(f"hardened:{resource}", str(hardened_until), ex=max(cooldown_sec, 1))
+                return
+            except Exception as e:
+                self._degrade("set_resource_hardened", e)
+        self._hardened_resources[resource] = hardened_until
+
+    async def get_resource_hardened_until(self, resource: str, now: float) -> float:
+        if self.connected:
+            try:
+                val = await self.redis_client.get(f"hardened:{resource}")
+                return float(val) if val else 0.0
+            except Exception as e:
+                self._degrade("get_resource_hardened_until", e)
+        until = self._hardened_resources.get(resource, 0.0)
+        if until and now >= until:
+            del self._hardened_resources[resource]
+            return 0.0
+        return until
+
+    async def list_hardened_resources(self, now: float) -> list:
+        """Visibility for /admin/hardening - only currently-active entries."""
+        results = []
+        if self.connected:
+            try:
+                async for key in self.redis_client.scan_iter(match="hardened:*"):
+                    val = await self.redis_client.get(key)
+                    if val:
+                        results.append({"resource": key.split(":", 1)[1], "hardened_until": float(val)})
+                return results
+            except Exception as e:
+                self._degrade("list_hardened_resources", e)
+        for resource, until in list(self._hardened_resources.items()):
+            if until > now:
+                results.append({"resource": resource, "hardened_until": until})
+        return results
 
     # --------------------------------------------------------------------- ml
 
