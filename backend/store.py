@@ -751,7 +751,14 @@ class SharedStore:
                     }
 
         for prof in profiles:
-            subject = prof.get("subject", "")
+            # ML worker's profiling.py.to_dict() (the real payload written to
+            # profile:{subject}) keys this "subject_id", never "subject" -
+            # this line silently skipped every single profile since the
+            # graph merge, which is why the dashboard's "Anomalies Only"
+            # filter never showed anything: no profile ever reached the
+            # status/is_cross_tenant logic below. Found live, on a running
+            # gateway, not in a test.
+            subject = prof.get("subject_id", "")
             if not subject:
                 continue
             user_node_id = f"user:{subject}"
