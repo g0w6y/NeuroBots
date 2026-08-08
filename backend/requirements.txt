@@ -10,9 +10,16 @@ websockets==12.0
 pyjwt==2.13.0
 httpx==0.25.2
 python-dotenv==1.0.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
+# pydantic-core (pydantic's Rust extension) has no prebuilt wheel before
+# 2.46.x for Python 3.14 - PyO3 in older pydantic-core builds caps out at
+# Python 3.13, so pip falls back to building from source via cargo/maturin,
+# which fails on any machine without a Rust toolchain configured. Verified
+# by testing the actual install: pydantic==2.5.0/2.9.2 both fail to build
+# on Python 3.14; pydantic==2.13.4 installs a real cp314 wheel with no
+# source build at all. Pinned to the version confirmed to have one.
+pydantic==2.13.4
+pydantic-settings==2.15.0
 redis==5.0.0
-asyncpg==0.29.0
+asyncpg==0.30.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
