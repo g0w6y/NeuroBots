@@ -169,7 +169,7 @@ Every claim below is committed and pushed, not local-only.
 - `backend/tests/` and `ml/tests/`: 46 unit tests, all passing
 - `frontend/contract-check.mjs`: 44 of 44 checks, verifying the dashboard
   renders real gateway data correctly, field by field
-- `backend/benchmark.py`: real concurrent throughput measurement
+- `scripts/benchmark.py`: real concurrent throughput measurement
 
 **Documentation, all real and all in the repo:** `ARCHITECTURE.md`,
 `DEPLOYMENT.md`, `PERFORMANCE.md`, `TESTING.md`, `DEMO.md`, `backend/MEMORY.md`.

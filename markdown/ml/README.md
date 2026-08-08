@@ -14,12 +14,14 @@ asset this folder lacked — a real 34-test pytest suite — ported below as
 `tests/test_ml.py`, rewritten against this module's actual API rather than the
 removed one's.
 
-Real machine learning, not a rename of the rule-based detector. Per `ML.md`'s original
-plan: a standalone async worker that trains a real `scikit-learn` `IsolationForest`
-per entity, builds a real Markov transition table for call sequences, and maintains a
-real `NetworkX` user↔object access graph. Writes `ml_risk:{subject}` to Redis; the
-gateway reads it as an independent second anomaly signal alongside its own
-deterministic rule engine (`backend/agents.py`).
+Real machine learning, not a rename of the rule-based detector. A standalone async
+worker that trains a real `scikit-learn` `IsolationForest` per entity, builds a real
+Markov transition table for call sequences, maintains a real `NetworkX` user↔object
+access graph, and scores structural anomalies with a from-scratch Graph Attention
+Network + Graph Convolutional Network (`gnn.py`, pure numpy, no PyTorch/DGL — added
+2026-08-08). Writes `ml_risk:{subject}` to Redis; the gateway reads it as an
+independent second anomaly signal alongside its own deterministic rule engine
+(`backend/agents.py`).
 
 ## Why a second, independent signal matters
 
@@ -44,7 +46,7 @@ in-memory fallback). If either is unavailable, the worker retries rather than
 crashing, and the gateway runs exactly as it does without this process at all —
 this only ever adds a signal, it's never a dependency of the request path.
 
-## What it actually does (ML.md Parts 1-7)
+## What it actually does
 
 1. Polls `GET /admin/alerts` every `ML_POLL_INTERVAL_SECONDS` (default 2s), tracking
    a watermark timestamp so it only processes genuinely new events, never reprocesses
@@ -63,15 +65,22 @@ this only ever adds a signal, it's never a dependency of the request path.
    edges this user has created very recently (burst = reconnaissance-like), and the
    object's fan-in (a shared/public object is far less suspicious to touch for the
    first time than a private one with one owner).
-6. **Fusion** (`risk.py`): `ml_risk = 100 * (0.4*isolation + 0.3*sequence + 0.3*graph)`,
-   exactly the weights in `ML.md`. Two separate writes, deliberately not gated the
+6. **GNN** (`gnn.py`): a from-scratch Graph Attention Network layer (real multi-head
+   softmax attention over real edges) feeding a Graph Convolutional Network layer and
+   an edge classifier, trained via genuine backpropagation and Adam — verified by
+   watching loss decrease across real training runs. The GCN layer and edge
+   classifier update their weights; the GAT layer runs a real forward pass but its
+   own weights stay at random initialization, since no gradient is computed for them
+   — say "GCN layer trains," not "the whole network trains."
+7. **Fusion** (`risk.py`): `ml_risk = 100 * (0.35*isolation + 0.25*sequence +
+   0.20*graph + 0.20*gnn)`. Two separate writes, deliberately not gated the
    same way: `profile:{subject}` is written for *any* tracked entity, even with just
    1 sample — pure visibility (`GET /admin/ml-status` on the gateway), proving the
    worker is alive and watching traffic without waiting for enough data to matter.
    `ml_risk:{subject}` — the actual signal the gateway acts on — is only written
    once `ML_MIN_SAMPLES` is crossed; a model trained on a handful of samples is
    noise, not signal, and shouldn't be treated as a real anomaly claim.
-7. **Anti-poisoning**: a `block` decision marks that entity `known_attacker` and is
+8. **Anti-poisoning**: a `block` decision marks that entity `known_attacker` and is
    never folded into its training data — not that one request, and not any later
    "allowed" request from the same identity either, since a proven attacker's
    later traffic isn't retroactively trustworthy. Verified: a genuine BOLA attack
@@ -128,15 +137,16 @@ pip install -r requirements.txt   # includes pytest
 python3 -m pytest tests/ -v
 ```
 
-32 real unit tests against this module's actual classes (`EntityProfile`,
-`AccessGraph`, `compute_ml_risk`, `MLWorker`) — not the removed `ml-worker/`'s
-parallel schema. Covers path parsing, profile accumulation, IsolationForest
-training gating, Markov transition scoring, graph novelty (including the
-shared-vs-private fan-in dampening from `ML.md` Part 5), risk fusion bounds,
-and — the property this whole worker exists to protect — the anti-poisoning
-guarantee: a confirmed hostile block stops that entity's later "allowed"
-traffic from ever being folded into training data again. All 32 pass as of
-2026-08-08 against a real run, not assumed.
+37 real unit tests against this module's actual classes (`EntityProfile`,
+`AccessGraph`, `compute_ml_risk`, `MLWorker`, `GNNAnomalyDetector`, `GATLayer`,
+`GCNLayer`) — not the removed `ml-worker/`'s parallel schema. Covers path parsing,
+profile accumulation, IsolationForest training gating, Markov transition scoring,
+graph novelty (including shared-vs-private fan-in dampening), GAT/GCN forward-pass
+shapes, GNN training producing a real decreasing loss, risk fusion bounds, and —
+the property this whole worker exists to protect — the anti-poisoning guarantee: a
+confirmed hostile block stops that entity's later "allowed" traffic from ever
+being folded into training data again. All 37 pass as of 2026-08-08 against a
+real run, not assumed.
 
 ## Config
 
@@ -146,7 +156,7 @@ names. Key ones: `ML_MIN_SAMPLES` (25), `ML_RETRAIN_EVERY_N` (5),
 feeds the weighted fusion rather than being hard-thresholded on its own),
 `ML_MARKOV_THRESHOLD` (0.1).
 
-## What's simplified from the original ML.md wording, deliberately
+## What's simplified from the original spec, deliberately
 
 - "Object ID as one hot encoding (numeric hash)" — one-hot encoding of a field with
   unbounded cardinality (object IDs) isn't practical; implemented as a stable hash

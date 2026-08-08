@@ -163,15 +163,15 @@ A gateway that sits in front of an API and blocks authorization attacks in real 
 
 ## Real ML worker (new, closes a real plan-vs-reality gap)
 
-`ML.md` planned a real machine-learning system: per-entity IsolationForest
+The original spec planned a real machine-learning system: per-entity IsolationForest
 (scikit-learn), Markov chain sequence modeling, NetworkX graph analysis. What
 existed before this was `agents.py` - genuinely useful, genuinely tested, but
 hand-written threshold rules, not ML. That gap is now closed for real: `ml/`
 (sibling to `backend/` in the Project0 repo, deliberately NOT nested inside
-`backend/` - `ML.md`'s own docker-compose treats it as a separate top-level
-service, and nesting it would also create an import collision with
-`backend/config.py`) is a standalone async worker doing exactly what was
-planned - see `ml/README.md` for the full detail.
+`backend/` - the compose file treats it as a separate top-level service, and
+nesting it would also create an import collision with `backend/config.py`) is
+a standalone async worker doing exactly what was planned - see `ml/README.md`
+for the full detail.
 
 Gateway-side change: `store.get_ml_risk()` (new) reads `ml_risk:{subject}` from
 the same shared Redis, and `main.py` adds it as a second, genuinely independent
@@ -209,13 +209,17 @@ being written down, not assumed from memory — caught and fixed two wrong
 ones in the process (`bfla_violation` → actually `bfla_role_violation`,
 `shadow_endpoint_signal` → actually `shadow_endpoint_access`).
 
-**`backend/PERFORMANCE.md` + `backend/benchmark.py`** (new) — real
+**`backend/PERFORMANCE.md` + `scripts/benchmark.py`** (new) — real
 concurrent throughput/latency, not just the single-threaded decision
 overhead `attack_sim/simulate.py` already measured. Headline: 101.4 req/s
 at 50 concurrent identities, 0 errors, end-to-end p50 15.6ms / p99 190ms.
 Gateway's own decision overhead stayed sub-millisecond throughout (p50
 0.05ms, p99 0.42ms, read from the audit log's server-side `latency_ms`) -
-proof the `<15ms` budget is met by a wide margin even under concurrent load.
+proof the `<15ms` budget is met by a wide margin under concurrent load with
+the in-memory fallback. That number does NOT hold with real Redis attached
+under real concurrent load (p99 rises to ~95ms) - see PERFORMANCE.md's
+"With real Redis attached" section, added 2026-08-08, found by re-testing
+this exact benchmark against a genuinely fresh clone.
 
 A first run at 150 concurrent identities produced an alarming p99 over 4
 seconds. Diagnosed properly before writing anything down, not assumed:
@@ -468,8 +472,8 @@ Full fix needs a real backend's ownership data behind this gateway. Don't invent
 
 ## Team status
 
-- Gouri: JWT, reverse proxy, BOLA/BFLA/enumeration — done and tested. Task detail in GOURI.md.
-- Jeevan: rate limiting, feature extraction, policy engine, logging — done and tested, but built earlier in this session, not by Jeevan. Updated 2026-08-08: Jeevan (`j33v4nz`) pushed his first real commit - an interactive D3.js network access graph (user-endpoint-resource), on `feature/network-access-graph`. Reviewed in full before merging, not taken on faith: the graph visualization itself (`frontend/src/components/NetworkGraph.jsx`, `store.py`'s `get_graph_data()`, `ml/graph.py`'s `export_graph()`) was real, working, and genuinely useful - merged. Two parts were not merged, for concrete reasons: a `backend/llm_engine.py` that builds a LangChain `PromptTemplate`, formats it, then never calls any LLM - the "summary" was hardcoded Python f-strings falsely labeled `"engine": "LangChain v1.3.14"`, and it replaced an existing, deliberate, honest disclosure comment in `ThreatHunt.jsx` ("There is no LLM wired into this build...") with UI that displayed the fake output as if it were real. And a `POST /admin/simulate` endpoint wired to a visible "Run Attack Suite" dashboard button - real risk, since `attack_sim/simulate.py` is only safe to run once per gateway process (see the Attack Simulation Suite section above); a judge clicking that button twice would cause a live, visible false positive. Excluded both, credited the real work. Task detail in JEEVAN.md.
+- Gouri: JWT, reverse proxy, BOLA/BFLA/enumeration — done and tested.
+- Jeevan: rate limiting, feature extraction, policy engine, logging — done and tested, but built earlier in this session, not by Jeevan. Updated 2026-08-08: Jeevan (`j33v4nz`) pushed his first real commit - an interactive D3.js network access graph (user-endpoint-resource), on `feature/network-access-graph`. Reviewed in full before merging, not taken on faith: the graph visualization itself (`frontend/src/components/NetworkGraph.jsx`, `store.py`'s `get_graph_data()`, `ml/graph.py`'s `export_graph()`) was real, working, and genuinely useful - merged. Two parts were not merged, for concrete reasons: a `backend/llm_engine.py` that builds a LangChain `PromptTemplate`, formats it, then never calls any LLM - the "summary" was hardcoded Python f-strings falsely labeled `"engine": "LangChain v1.3.14"`, and it replaced an existing, deliberate, honest disclosure comment in `ThreatHunt.jsx` ("There is no LLM wired into this build...") with UI that displayed the fake output as if it were real. And a `POST /admin/simulate` endpoint wired to a visible "Run Attack Suite" dashboard button - real risk, since `attack_sim/simulate.py` is only safe to run once per gateway process (see the Attack Simulation Suite section above); a judge clicking that button twice would cause a live, visible false positive. Excluded both, credited the real work.
 
 Updated 2026-08-08 (second pass): Jeevan pushed a much larger commit -
 "Red Team Sandbox, OpenAPI Importer, Threat Intelligence, and AI Copilot
@@ -613,4 +617,4 @@ team wants that look, not bundled with this one.
 
 ## If you're picking this up cold
 
-Read GOURI.md and JEEVAN.md for the per-person task breakdown and the reasoning behind each fix in that person's area. Read this file for the big picture. Don't trust your memory of "what the code does" over actually reading main.py, detect.py, store.py, agents.py — several serious bugs in this project were the kind that look correct on a skim and are provably wrong when you actually run a request through them.
+Read this file for the big picture and the reasoning behind each fix. Don't trust your memory of "what the code does" over actually reading main.py, detect.py, store.py, agents.py — several serious bugs in this project were the kind that look correct on a skim and are provably wrong when you actually run a request through them.
