@@ -19,6 +19,7 @@ import atexit
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -62,6 +63,49 @@ def wait_for(url, name, timeout_sec=30):
         time.sleep(0.5)
     log(f"WARNING: {name} did not respond within {timeout_sec}s - check its log above")
     return False
+
+
+def port_is_free(port, host="127.0.0.1"):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) != 0
+
+
+def start_service_on_port(name, cmd, cwd, port, health_url, env=None, timeout_sec=30):
+    """Spawn a service that owns a specific port - checks first, so a port
+    already held by something else is caught immediately with one clear
+    message, instead of silently coasting on whatever's already there and
+    then spamming 'exited unexpectedly' every second once the doomed
+    duplicate this function would otherwise have spawned inevitably fails
+    to bind. Found by testing an actual port conflict, not imagined:
+    without this check, run.py reported both services as 'up' when a
+    leftover process from an earlier session or another clone already had
+    the ports, then flooded the terminal with repeated warnings once the
+    real (never-actually-started) processes were polled and found dead."""
+    if not port_is_free(port):
+        if http_ok(health_url):
+            log(f"{name}: something is already listening on {port} and answering "
+                f"health checks - reusing it instead of starting a duplicate that "
+                f"would fail to bind. If this isn't actually {name}, stop it and "
+                f"re-run: lsof -i :{port} to find it, kill -9 <pid> to stop it.")
+            return None
+        log(f"FATAL: port {port} is already in use by something that is NOT "
+            f"answering as {name} ({health_url}). Starting {name} here would just "
+            f"fail to bind and this script would spin forever reporting it dead.")
+        log(f"  find what's using it : lsof -i :{port}")
+        log(f"  stop it               : kill -9 <pid from above>")
+        log(f"  then re-run           : python3 run.py")
+        stop_all()
+        sys.exit(1)
+
+    p = spawn(name, cmd, cwd, env=env)
+    if not wait_for(health_url, name, timeout_sec=timeout_sec):
+        if p.poll() is not None:
+            log(f"FATAL: {name} exited immediately (code {p.returncode}) instead of "
+                f"starting - check the output above for the real error.")
+            stop_all()
+            sys.exit(1)
+    return p
 
 
 def spawn(name, cmd, cwd, env=None):
@@ -213,13 +257,17 @@ def main():
     ensure_backend_deps()
 
     log("=== 1/4 demo upstream API ===")
-    spawn("demo_upstream", [sys.executable, "-u", "demo_upstream.py"], cwd=BACKEND)
-    wait_for(f"{UPSTREAM_URL}/api/accounts/1001", "demo upstream")
+    start_service_on_port(
+        "demo_upstream", [sys.executable, "-u", "demo_upstream.py"], BACKEND,
+        port=9000, health_url=f"{UPSTREAM_URL}/api/accounts/1001",
+    )
 
     log("=== 2/4 gateway ===")
     env = {"REDIS_URL": "redis://127.0.0.1:6379"} if redis_up else {}
-    spawn("gateway", [sys.executable, "-u", "main.py"], cwd=BACKEND, env=env)
-    wait_for(f"{GATEWAY_URL}/health", "gateway")
+    start_service_on_port(
+        "gateway", [sys.executable, "-u", "main.py"], BACKEND,
+        port=8080, health_url=f"{GATEWAY_URL}/health", env=env,
+    )
 
     log("=== 3/4 ML worker ===")
     if redis_up and http_ok(GATEWAY_URL + "/health"):
@@ -261,12 +309,24 @@ def main():
     log("")
     log("Press Ctrl-C to stop everything this script started.")
 
+    # Watches for a service dying after a clean start (crashed mid-run, not a
+    # startup failure - those are already caught above). Warns exactly once
+    # per process, not once a second forever - an earlier version spammed
+    # "exited unexpectedly" continuously once a process was dead, which is
+    # both useless (you already know) and looks broken on a live demo screen.
+    already_warned = set()
+    critical = {"demo_upstream", "gateway"}
     try:
         while True:
             time.sleep(1)
             for name, p in PROCS:
-                if p.poll() is not None:
-                    log(f"WARNING: {name} exited unexpectedly (code {p.returncode}) - check its output above")
+                if p.poll() is not None and name not in already_warned:
+                    already_warned.add(name)
+                    log(f"WARNING: {name} exited (code {p.returncode}) - check its output above")
+                    if name in critical:
+                        log(f"{name} is required for everything else here - stopping.")
+                        stop_all()
+                        sys.exit(1)
     except KeyboardInterrupt:
         pass
 
