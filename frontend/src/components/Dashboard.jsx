@@ -10,15 +10,8 @@ import RiskChart from './RiskChart.jsx';
 import MitreMatrix from './MitreMatrix.jsx';
 import EntityTable from './EntityTable.jsx';
 import IncidentFeed from './IncidentFeed.jsx';
+import { Icon, PanelHeader } from './PanelHeader.jsx';
 import { GATEWAY_URL } from '../api/gateway.js';
-
-function Icon({ name, className = '' }) {
-  return (
-    <span className={`material-symbols-outlined ${className}`} aria-hidden="true">
-      {name}
-    </span>
-  );
-}
 
 // Every section is now backed by real gateway data:
 //   Overview        /admin/{metrics,alerts,entities,incidents}
@@ -283,11 +276,11 @@ export default function Dashboard() {
           {/* min-h-0 lets the flex-1 child below actually shrink/grow inside
               the grid-stretched height instead of overflowing it - the row's
               real height comes from ThreatFeed's clamp() next to it. */}
+          {/* IncidentFeed owns its own flex-1/min-h-0 sizing now (see
+              IncidentFeed.jsx) - no wrapper div needed here. */}
           <div className="flex min-h-0 flex-col gap-3 lg:col-span-3">
             <MitreMatrix counts={metrics?.mitre_counts} />
-            <div className="min-h-0 flex-1">
-              <IncidentFeed incidents={incidents} />
-            </div>
+            <IncidentFeed incidents={incidents} />
           </div>
         </section>
 
@@ -300,19 +293,6 @@ export default function Dashboard() {
         )}
        </div>
       </main>
-    </div>
-  );
-}
-
-export function PanelHeader({ icon, children, tone = 'default', right }) {
-  const toneText = { default: 'text-ink-muted', accent: 'text-accent', danger: 'text-risk-danger' }[tone];
-  return (
-    <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 py-2.5">
-      <span className={`label-caps flex items-center gap-2 ${toneText}`}>
-        {icon ? <Icon name={icon} className="text-[16px]" /> : null}
-        {children}
-      </span>
-      {right}
     </div>
   );
 }
