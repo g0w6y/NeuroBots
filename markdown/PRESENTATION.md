@@ -166,7 +166,7 @@ Every claim below is committed and pushed, not local-only.
   classes detected, 18 of 18 legitimate requests correctly allowed, 0
   false positives, plus a real attack-chain scenario (one identity: recon,
   BOLA, BFLA, pivot, evade) reconstructed live on the Threat Hunt dashboard
-- `backend/tests/` and `ml/tests/`: 46 unit tests, all passing
+- `backend/tests/` and `ml/tests/`: 51 unit tests, all passing
 - `frontend/contract-check.mjs`: 44 of 44 checks, verifying the dashboard
   renders real gateway data correctly, field by field
 - `scripts/benchmark.py`: real concurrent throughput measurement
