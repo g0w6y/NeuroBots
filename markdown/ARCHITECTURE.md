@@ -188,7 +188,7 @@ along the way) and `backend/MEMORY.md` for the incident-level detail.
   `/admin/incidents` output on 2026-08-08 (see `backend/MEMORY.md`).
 - Component diagram (§1): every edge is a real network call or shared
   connection in the running system — reachable and testable via the commands
-  in `backend/PERFORMANCE.md` and `backend/attack_sim/simulate.py`.
+  in `backend/PERFORMANCE.md` and `../backend/attack_sim/simulate.py`.
 
 For the reasoning behind each design decision (why hard/soft signal
 separation, why BOLA ownership is first-touch, why the ML risk signal is

@@ -12,6 +12,8 @@ backend/    FastAPI gateway - JWT validation, BOLA/BFLA detection, rate limiting
 ml/         Real ML worker - per-entity IsolationForest, Markov sequence model,
             NetworkX access graph (scikit-learn/networkx, not a rename of backend/)
 frontend/   React/Vite dashboard - reads real gateway state, no simulated data
+markdown/   Every doc in the repo except this README - see the Documentation
+            section below for what's where
 start_all.sh / stop_all.sh   one-command demo startup/shutdown, with real health
                               checks between each step - see below
 ```
@@ -39,7 +41,7 @@ volumes).
 `./scripts/demo.sh` does that plus health-waits, runs the attack suite and the
 benchmark, and opens the dashboard.
 
-See `docs/DEPLOYMENT.md` before running this anywhere that is not your laptop —
+See `markdown/docs/DEPLOYMENT.md` before running this anywhere that is not your laptop —
 the default `JWT_SECRET` and `ADMIN_API_KEY` are demo values.
 
 ## Without Docker: one command
@@ -139,17 +141,25 @@ CORS; lock `CORS_ALLOWED_ORIGINS` down before any real deployment.
 
 ## Documentation
 
+All documentation lives in `markdown/`, one folder for every doc in the repo.
+
 | Doc | What it covers |
 |---|---|
-| `docs/ARCHITECTURE.md` | how the pieces fit, the decision pipeline, trust boundaries |
-| `docs/TESTING.md` | running the attack suite, contract check and benchmark — and reading a bad result |
-| `docs/DEPLOYMENT.md` | production checklist, scaling, known gaps |
-| `BENCHMARK.md` | latest measured latency and throughput (regenerate with `scripts/benchmark.py`) |
+| `markdown/ARCHITECTURE.md` | diagram-based: component graph, the 9-step decision pipeline, autonomous mitigation and hardening, horizontal scaling |
+| `markdown/docs/ARCHITECTURE.md` | how the pieces fit, the decision pipeline, trust boundaries |
+| `markdown/docs/TESTING.md` | running the attack suite, contract check and benchmark, and reading a bad result |
+| `markdown/docs/DEPLOYMENT.md` | production checklist, scaling, known gaps |
+| `markdown/DEPLOYMENT.md` | secret rotation, the fail-closed production gate, secrets-manager integration boundary |
+| `markdown/PERFORMANCE.md` | real measured latency numbers and how they were found |
+| `markdown/BENCHMARK.md` | latest measured latency and throughput (regenerate with `scripts/benchmark.py`) |
+| `markdown/DEMO.md` | exact, tested commands to run the full stack for a live demo |
+| `markdown/PRESENTATION.md` | Round 2 presentation slide source material |
 
-See `backend/README.md` and `backend/MEMORY.md` for the gateway's full status,
-every bug found and fixed with why it mattered, and what's genuinely still open.
-See `frontend/README.md` for what the dashboard shows and how it derives display
-metrics from the gateway's real responses.
+See `markdown/backend/README.md` and `markdown/backend/MEMORY.md` for the
+gateway's full status, every bug found and fixed with why it mattered, and
+what's genuinely still open. See `markdown/frontend/README.md` for what the
+dashboard shows and how it derives display metrics from the gateway's real
+responses. See `markdown/ml/README.md` for the ML worker.
 
 ## Problem Statement Understanding..
 
