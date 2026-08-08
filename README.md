@@ -14,8 +14,9 @@ ml/         Real ML worker: per-entity IsolationForest, Markov sequence model,
 frontend/   React/Vite dashboard, reads real gateway state, no simulated data
 markdown/   Every doc in the repo except this README, see the Documentation
             section below for what's where
-start_all.sh / stop_all.sh   one-command demo startup/shutdown, with real health
-                              checks between each step, see below
+run.py      python3 run.py starts everything (Redis, Postgres, upstream,
+            gateway, ML worker, dashboard) from one command, see below
+start_all.sh / stop_all.sh   the same idea without Docker/frontend, see below
 ```
 
 ### Protecting a new endpoint
@@ -26,7 +27,24 @@ code change and no redeploy. Anything under a protected prefix that is *not*
 listed still requires a valid token; listing it is what adds authorization on
 top of authentication. Point `ROUTE_CONFIG_FILE` at a different file to override.
 
-## Fastest way to run it: Docker Compose
+## Fastest way to run it: one command
+
+```bash
+python3 run.py
+```
+
+Starts Redis and PostgreSQL (Docker, if available, otherwise the gateway
+falls back to in-memory state automatically), installs backend/frontend
+dependencies on first run if they're missing, then starts the demo
+upstream API, the gateway, the ML worker, and the dashboard, all from this
+one process, in one terminal. Real health checks between each step, not
+fixed sleeps. Press Ctrl-C to stop everything it started, cleanly.
+
+```bash
+cd backend && python3 attack_sim/simulate.py    # in a second terminal, once run.py is up
+```
+
+## Docker Compose (equivalent, containerised)
 
 ```bash
 cp .env.example .env
