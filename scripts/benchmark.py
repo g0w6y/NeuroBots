@@ -1,5 +1,5 @@
 """
-Project0 performance benchmark (DEVOPS.md Part 5).
+Project0 performance benchmark.
 
 Measures what the gateway costs you: end-to-end latency percentiles as a client
 experiences them, the gateway's own decision overhead as recorded in its audit

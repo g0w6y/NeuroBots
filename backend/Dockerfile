@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 
-# Non-root, per DEVOPS.md. A gateway whose whole job is enforcing authorization
+# Non-root. A gateway whose whole job is enforcing authorization
 # should not be the one process on the host running as uid 0.
 RUN useradd --create-home --uid 10001 project0 \
     && chown -R project0:project0 /app

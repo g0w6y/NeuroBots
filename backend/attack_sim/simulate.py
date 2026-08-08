@@ -2,8 +2,8 @@
 Project0 attack simulation suite.
 
 Drives real HTTP traffic at a running gateway and scores it against the success
-criteria in BACKEND.md: 8/8 attack classes detected, 0 false positives on
-legitimate traffic, gateway decision overhead under 15ms.
+criteria: 18/18 attack classes detected, 0 false positives on legitimate
+traffic, gateway decision overhead under 15ms.
 
 Nothing here is mocked. Every request is a real request over the wire; every
 verdict below is read off the gateway's own X-ZT-Decision response header. The
@@ -168,7 +168,7 @@ def phase_benign(sim, tag="", account_also_ok=()):
 
 
 def phase_attacks(sim):
-    """The 8 attack classes from PRODUCT.md. Each must be blocked."""
+    """The core attack classes, each expected to be caught."""
     alice = mint("alice")
 
     # 1. BOLA — a real, logged-in user reaching for someone else's object.
@@ -540,7 +540,7 @@ def report(sim, gateway):
               f"   (recon -> BOLA -> BFLA -> pivot -> evade, one identity)")
 
     # Gateway decision overhead, measured by the gateway itself and read back
-    # from the audit log. This is the number BACKEND.md's <15ms budget refers to:
+    # from the audit log. This is the number the <15ms budget refers to:
     # time spent deciding, not the upstream API's own response time.
     try:
         alerts = httpx.get(f"{gateway}/admin/alerts", headers=admin, timeout=15).json()

@@ -1,5 +1,5 @@
 {
-  "_comment": "Route table for the Project0 gateway (BACKEND.md Part 3). Edit this file to protect a new endpoint - no code change, no redeploy. Any path under a protected prefix that is NOT listed here still requires a valid token; listing it here is what adds object-level (BOLA) and role-level (BFLA) rules on top.",
+  "_comment": "Route table for the Project0 gateway. Edit this file to protect a new endpoint - no code change, no redeploy. Any path under a protected prefix that is NOT listed here still requires a valid token; listing it here is what adds object-level (BOLA) and role-level (BFLA) rules on top.",
 
   "protected_prefixes": ["api"],
 

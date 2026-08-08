@@ -1,5 +1,5 @@
 """
-Project0 ML worker (ML.md).
+Project0 ML worker.
 
 Standalone async process. Polls the gateway's /admin/alerts for real request
 events, builds real per-entity IsolationForest models (scikit-learn), a real
@@ -11,7 +11,7 @@ Never blocks anything. If this process isn't running, the gateway degrades
 to exactly what it was before this existed - this only adds a signal, it
 never becomes a dependency of the request path.
 
-Anti-poisoning rule (ML.md Part 7): only allowed requests train the models.
+Anti-poisoning rule: only allowed requests train the models.
 A confirmed attacker's traffic is recorded (record_hostile) but never folded
 into that entity's baseline - the same principle used everywhere else in
 this project.

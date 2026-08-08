@@ -3,8 +3,8 @@ import { HUNTS, runHunts } from '../api/analysis.js';
 
 // Threat Hunt: saved queries plus per-subject attack-chain reconstruction.
 //
-// PRODUCT.md proposes LangChain-generated hunting summaries. There is no LLM
-// wired into this build - no key, no client, no endpoint - so rather than
+// Early planning proposed LangChain-generated hunting summaries. There is no
+// LLM wired into this build - no key, no client, no endpoint - so rather than
 // render prose that reads like analysis but is actually a template, this page
 // does deterministic correlation over the real alert window and shows its
 // working. Every count below is derived from gateway decisions you can click
@@ -44,8 +44,8 @@ export default function ThreatHunt({ alerts, entities }) {
         <p className="font-mono text-[11px] leading-relaxed text-ink-faint">
           <span className="text-ink-muted">Deterministic correlation over the live alert window.</span>{' '}
           Every figure below is computed from real gateway decisions — no model, no generated prose.
-          The LangChain summarisation layer described in PRODUCT.md is not built; this page does the
-          correlation part of that job in a way you can verify against the audit log.
+          Early planning proposed an LLM-generated summarisation layer; it was never built, on purpose
+          - this page does the correlation part of that job in a way you can verify against the audit log.
         </p>
       </div>
 

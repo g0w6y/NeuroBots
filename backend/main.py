@@ -83,7 +83,7 @@ def spawn(coro):
 class EventHub:
     """Fan-out of decision events to connected dashboards.
 
-    BACKEND.md Part 8 asks for decisions to be emitted to a queue or WebSocket
+    The original spec asks for decisions to be emitted to a queue or WebSocket
     so the frontend gets live updates; only 2-second polling existed, and each
     poll re-fetched up to 500 full alert objects and recomputed every derived
     metric client-side. Pushing is both cheaper and actually live.
@@ -166,8 +166,8 @@ async def security_headers_middleware(request: Request, call_next):
 async def startup_event():
     global upstream_client
     # httpx's default pool (max_connections=100, max_keepalive=20) is sized
-    # for a general-purpose client, not a gateway meant to front "thousands
-    # of entities" (ML.md) worth of concurrent traffic. Found via a real
+    # for a general-purpose client, not a gateway meant to front thousands
+    # of entities worth of concurrent traffic. Found via a real
     # concurrency benchmark (benchmark.py): 150 concurrent identities produced
     # a multi-second tail on the upstream round trip while the gateway's own
     # decision logic stayed sub-millisecond throughout (proven separately via
@@ -405,7 +405,7 @@ PROTECTED_PREFIXES = ("api",)
 
 
 def load_route_config():
-    """Load the route table from JSON, per BACKEND.md Part 3.
+    """Load the route table from JSON.
 
     The table was a Python literal, which meant protecting a new endpoint
     required editing source and restarting - and, combined with the fail-open
@@ -1013,7 +1013,7 @@ async def health():
 
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
-    """Live decision stream (BACKEND.md Part 8).
+    """Live decision stream.
 
     Auth is the same X-Admin-Key as the REST admin routes, accepted either as a
     header or as a query parameter - browsers cannot set headers on a WebSocket
@@ -1143,7 +1143,7 @@ async def get_entities():
             # whole life of the process. The dashboard previously had to derive
             # these by re-scanning its alert window, which meant the numbers
             # silently reset once traffic aged out of that window; these are the
-            # real lifetime figures, and `objects` (the FRONTEND.md "objects
+            # real lifetime figures, and `objects` (the dashboard's "objects
             # accessed" column) was tracked here but never serialised at all.
             "request_count": entity.request_count,
             "endpoints": len(entity.endpoints),
@@ -1414,7 +1414,7 @@ async def gateway(request: Request):
     action, status_code, alert, resp, redacted_body = await check_and_forward(request)
 
     if action == "block":
-        # BACKEND.md Part 5 calls for 429 on rate-limit denials, and the
+        # The original spec calls for 429 on rate-limit denials, and the
         # distinction is not cosmetic: 403 tells a client "you may not do this,
         # ever", so a well-behaved client stops. 429 with Retry-After tells it
         # "not right now", which is the truth and lets it back off and recover.

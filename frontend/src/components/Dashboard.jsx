@@ -24,9 +24,9 @@ import { GATEWAY_URL } from '../api/gateway.js';
 //   Logs            /admin/alerts, full window
 //
 // The original rule still holds and is worth restating: nothing on this console
-// is invented. Where a capability genuinely does not exist - the LangChain
-// summarisation layer PRODUCT.md proposes - the page says so plainly instead of
-// rendering generated prose that reads like analysis.
+// is invented. Where a capability genuinely does not exist - the LLM-generated
+// summarisation layer early planning proposed - the page says so plainly instead
+// of rendering generated prose that reads like analysis.
 const NAV = [
   { id: 'overview', icon: 'dashboard', label: 'Overview' },
   { id: 'hunt', icon: 'radar', label: 'Threat Hunt' },

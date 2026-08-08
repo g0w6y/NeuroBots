@@ -152,7 +152,7 @@ def resource_hardening_signal(resource: str, hardened_until: float, now: float) 
 def risk_score(signals: List[Signal]) -> int:
     """Fuse signal weights into a single 0-100 risk score.
 
-    BACKEND.md Part 6 specifies max-with-cap-100. Straight summation (the
+    The original spec calls for max-with-cap-100. Straight summation (the
     previous behaviour) let two individually-unremarkable signals add their way
     past the block threshold, which manufactures exactly the false positive this
     gateway is measured on. Corroboration is still worth something - two

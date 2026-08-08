@@ -3,7 +3,7 @@ from config import settings
 
 
 def sequence_anomaly(prob: float) -> float:
-    """ML.md Part 4: 'sequence anomaly score as the negative log probability'.
+    """Sequence anomaly score as the negative log probability.
     Normalized into 0..1 so it combines cleanly with the other scores."""
     if prob <= 0:
         prob = 1e-6

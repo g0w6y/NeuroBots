@@ -1,5 +1,5 @@
 #!/bin/bash
-# Project0 end-to-end demo (DEVOPS.md Part 8).
+# Project0 end-to-end demo.
 #
 # Brings the whole stack up with Docker Compose, waits for it to actually be
 # healthy, proves detection with the attack suite, measures performance, and

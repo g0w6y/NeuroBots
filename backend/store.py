@@ -420,7 +420,7 @@ class SharedStore:
                 self._degrade("publish_ml_signal", e)
 
     async def get_ml_risk(self, subject: str) -> Optional[int]:
-        # Written by the separate ml/worker.py process (ML.md), never by this
+        # Written by the separate ml/worker.py process, never by this
         # one. Redis first when it is available, because that is the only path
         # that works across multiple gateway instances; the in-memory mirror
         # covers the single-process demo where no Redis exists.

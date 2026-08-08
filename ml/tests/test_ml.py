@@ -76,7 +76,7 @@ class TestEntityProfile:
         assert "1001" in p.objects_by_resource["account"]
 
     def test_record_hostile_marks_attacker_and_never_trains(self):
-        """The anti-poisoning guarantee (ML.md Part 7): once an entity has a
+        """The anti-poisoning guarantee: once an entity has a
         confirmed hostile block, its later allowed traffic must never be
         folded into training data - the worker enforces this in process_alert,
         not in EntityProfile itself, so this test exercises that boundary via
@@ -164,8 +164,8 @@ class TestAccessGraph:
 
     def test_shared_object_dampens_novelty(self):
         """A resource many users already touch (high fan-in) is much less
-        suspicious to visit for the first time than a private one - ML.md
-        Part 5's explicit "shared vs private" distinction."""
+        suspicious to visit for the first time than a private one - the
+        explicit "shared vs private" distinction the design calls for."""
         g = AccessGraph()
         now = time.time()
         for i in range(20):
