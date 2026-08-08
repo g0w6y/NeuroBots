@@ -1,3 +1,5 @@
+import { PanelHeader } from './PanelHeader.jsx';
+
 // Exactly the MITRE techniques the gateway actually emits (auth.py, detect.py,
 // main.py) - deliberately not a generic ATT&CK reference list. Keep this in sync
 // with the backend's mitre tags; showing a technique here the gateway can't
@@ -20,9 +22,7 @@ function severity(count) {
 export default function MitreMatrix({ counts = {} }) {
   return (
     <div className="glass-panel overflow-hidden rounded-lg">
-      <div className="border-b border-canvas-line px-4 py-3">
-        <h3 className="font-display text-sm font-semibold text-ink">MITRE ATT&amp;CK matrix</h3>
-      </div>
+      <PanelHeader icon="grid_view" tone="accent">MITRE ATT&amp;CK matrix</PanelHeader>
 
       {/* Fixed at 2 columns rather than viewport breakpoints (sm:/xl:) - this
           panel always lives in a narrow ~3/12 grid column next to Threat Feed,
@@ -36,10 +36,7 @@ export default function MitreMatrix({ counts = {} }) {
           const count = counts[t.id] || 0;
           const s = severity(count);
           return (
-            <div
-              key={t.id}
-              className={`flex h-full flex-col justify-between border-l-[3px] ${s.rule} bg-canvas-raised p-3`}
-            >
+            <div key={t.id} className={`border-l-[3px] ${s.rule} bg-canvas-raised p-3`}>
               <div className="flex items-baseline justify-between gap-2">
                 <span className="font-mono text-[11px] text-ink-muted">{t.id}</span>
                 <span className={`font-mono text-lg font-semibold tabular-nums ${s.text}`}>{count}</span>

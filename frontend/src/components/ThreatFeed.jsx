@@ -18,12 +18,13 @@ const DECISION_STYLES = {
 // Subject/IP/When held their full fixed width. The wrapper this sits in
 // scrolls horizontally rather than clipping once even this floor doesn't fit.
 const GRID_TEMPLATE = 'grid-cols-[78px_44px_minmax(160px,1fr)_minmax(84px,140px)_minmax(80px,120px)_72px]';
-// Sum of every column's minimum + 5 gaps (gap-3 = 12px) - the point below
-// which the row can no longer shrink and the container should scroll instead.
-// Only applies from md up: below md, GRID_TEMPLATE is overridden by
-// max-md:grid-cols-1 and rows stack single-column full width, so forcing this
-// floor there would make a narrow phone scroll horizontally for no reason.
-const MIN_TABLE_WIDTH_CLASS = 'md:min-w-[580px]';
+// Sum of every column's minimum (518) + 5 gaps (gap-3 = 60px) + the row's
+// own px-4 (32px) - the point below which the row can no longer shrink and
+// the container should scroll instead. Only applies from md up: below md,
+// GRID_TEMPLATE is overridden by max-md:grid-cols-1 and rows stack
+// single-column full width, so forcing this floor there would make a narrow
+// phone scroll horizontally for no reason.
+const MIN_TABLE_WIDTH_CLASS = 'md:min-w-[610px]';
 
 function riskTextColor(score) {
   if (score > 60) return 'text-risk-danger';
