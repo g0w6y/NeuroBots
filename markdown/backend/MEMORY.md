@@ -471,6 +471,55 @@ Full fix needs a real backend's ownership data behind this gateway. Don't invent
 - Gouri: JWT, reverse proxy, BOLA/BFLA/enumeration — done and tested. Task detail in GOURI.md.
 - Jeevan: rate limiting, feature extraction, policy engine, logging — done and tested, but built by Claude in this session, not by Jeevan. Updated 2026-08-08: Jeevan (`j33v4nz`) pushed his first real commit - an interactive D3.js network access graph (user-endpoint-resource), on `feature/network-access-graph`. Reviewed in full before merging, not taken on faith: the graph visualization itself (`frontend/src/components/NetworkGraph.jsx`, `store.py`'s `get_graph_data()`, `ml/graph.py`'s `export_graph()`) was real, working, and genuinely useful - merged. Two parts were not merged, for concrete reasons: a `backend/llm_engine.py` that builds a LangChain `PromptTemplate`, formats it, then never calls any LLM - the "summary" was hardcoded Python f-strings falsely labeled `"engine": "LangChain v1.3.14"`, and it replaced an existing, deliberate, honest disclosure comment in `ThreatHunt.jsx` ("There is no LLM wired into this build...") with UI that displayed the fake output as if it were real. And a `POST /admin/simulate` endpoint wired to a visible "Run Attack Suite" dashboard button - real risk, since `attack_sim/simulate.py` is only safe to run once per gateway process (see the Attack Simulation Suite section above); a judge clicking that button twice would cause a live, visible false positive. Excluded both, credited the real work. Task detail in JEEVAN.md.
 
+Updated 2026-08-08 (second pass): Jeevan pushed a much larger commit -
+"Red Team Sandbox, OpenAPI Importer, Threat Intelligence, and AI Copilot
+engines," 8 new backend modules, 3 new frontend components. Reviewed in
+full before merging, same standard as the first pass. Real and merged:
+`threat_forecast.py` (Shannon entropy + exponential smoothing over the
+real alert stream), `auto_harden.py` (endpoint-level hardening
+recommendations from real attack ratios), `kill_chain.py` (MITRE-phase
+attack correlation), `threat_intel.py` (attacker fingerprinting + bot
+timing analysis), `adaptive_trust.py` (per-entity trust scoring), and
+`openapi_importer.py` (parses a POSTed OpenAPI spec into suggested
+routes.json entries, no external fetch, no SSRF surface) - all wired
+into a new `IntelligenceConsole.jsx` + `ThreatHeatmap.jsx`, honestly
+labeled as rule-based engines, not AI.
+
+Not merged: `llm_reporter.py` - the exact same violation as the first
+pass, resubmitted under a new name. Builds a LangChain `PromptTemplate`,
+formats it, never calls an LLM, returns hardcoded f-strings falsely
+labeled `"engine": "LangChain v1.3.14"`. Its `main.py` import alone
+(`from llm_reporter import ...`) crashed the entire gateway on startup -
+`langchain_core` isn't installed or in requirements.txt - verified with
+a real `python3 main.py` run, not inferred. It also deleted ThreatHunt.jsx's
+honest "no LLM wired into this build" disclosure a second time; restored
+it. Also excluded: `red_team.py` + `POST /admin/simulate-attack`, the
+same "live attack button on the dashboard" risk excluded once already
+(a judge double-clicking it during a demo causes a real false positive) -
+plus its canned attack payloads target `acc_101`/`acc_9999`, ids that
+don't exist in `seed_ownership.json` or `demo_upstream.py`'s real seeded
+accounts (1001/1002/1003), so its "legitimate access" case wasn't even
+testing what it claimed to.
+
+Two real bugs found and fixed in the kept modules, both confirmed by
+actually running them against live traffic, not by reading the code:
+(1) `kill_chain.py` mapped `jwt_wrong_key` to the Initial Access phase -
+the real detector name is `jwt_bad_signature` - added the other missing
+real JWT detector names too. (2) all five kept modules read
+`sig.get("signal", "")` and `alert.get("timestamp", "")`; the real alert
+schema uses `"detector"` and `"time"`. This was a total-failure bug, not
+cosmetic - `/admin/kill-chains` returned `total_chains: 0` even with 10
+hostile subjects genuinely present, silently, with a 200 status. Fixed
+across all five files; re-verified live: 9 real chains reconstructed, 14
+real hardening recommendations, 10 real threat actors identified. Also
+reverted a second resubmission of the `@pytest.mark.anyio` swap in
+`test_resource_hardening.py` - verified this time that it doesn't
+currently break the tests (anyio's own pytest plugin loads as a side
+effect of httpx/starlette pulling in `anyio`), but it's still not the
+repo's declared, explicit testing convention (`pytest-asyncio` is in
+requirements.txt, `anyio` is not), so keeping `asyncio` is the honest
+choice, not just the old one.
+
 ## What's genuinely still open
 
 1. BOLA ground truth — mitigated, not solved (see above).

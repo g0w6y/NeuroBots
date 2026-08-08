@@ -11,6 +11,8 @@ import RiskChart from './RiskChart.jsx';
 import MitreMatrix from './MitreMatrix.jsx';
 import EntityTable from './EntityTable.jsx';
 import IncidentFeed from './IncidentFeed.jsx';
+import ThreatHeatmap from './ThreatHeatmap.jsx';
+import IntelligenceConsole from './IntelligenceConsole.jsx';
 import { Icon, PanelHeader } from './PanelHeader.jsx';
 import { GATEWAY_URL } from '../api/gateway.js';
 
@@ -28,6 +30,8 @@ import { GATEWAY_URL } from '../api/gateway.js';
 const NAV = [
   { id: 'overview', icon: 'dashboard', label: 'Overview' },
   { id: 'hunt', icon: 'radar', label: 'Threat Hunt' },
+  { id: 'intelligence', icon: 'neurology', label: 'Intelligence' },
+  { id: 'heatmap', icon: 'thermostat', label: 'Heatmap' },
   { id: 'inventory', icon: 'api', label: 'API Inventory' },
   { id: 'access', icon: 'lock_person', label: 'Access Control' },
   { id: 'report', icon: 'summarize', label: 'Executive Report' },
@@ -37,6 +41,8 @@ const NAV = [
 const VIEW_SUBTITLE = {
   overview: 'Live gateway state',
   hunt: 'Correlation over the live alert window',
+  intelligence: 'Kill chains, forecasting, threat intel, trust scores',
+  heatmap: 'Real-time attack intensity across time × endpoints',
   inventory: 'Enforced routes vs. observed traffic',
   access: 'Ownership grants, roles and cooldowns',
   report: 'Deterministic summary over real audit data',
@@ -196,6 +202,8 @@ export default function Dashboard() {
         )}
 
         {view === 'hunt' && <ThreatHunt alerts={allAlerts} entities={entities} />}
+        {view === 'intelligence' && <IntelligenceConsole />}
+        {view === 'heatmap' && <ThreatHeatmap alerts={allAlerts} />}
         {view === 'inventory' && <ApiInventory alerts={allAlerts} />}
         {view === 'access' && <AccessControl entities={entities} incidents={incidents} />}
         {view === 'report' && <ExecutiveReport />}

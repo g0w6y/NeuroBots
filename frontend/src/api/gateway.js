@@ -88,6 +88,37 @@ export async function getExecutiveReport() {
   return response.data;
 }
 
+// Innovation intelligence endpoints — predictive, forensic, and adaptive
+export async function getThreatForecast() {
+  const response = await client.get('/admin/threat-forecast');
+  return response.data;
+}
+
+export async function getAutoHarden() {
+  const response = await client.get('/admin/auto-harden');
+  return response.data;
+}
+
+export async function getKillChains() {
+  const response = await client.get('/admin/kill-chains');
+  return response.data;
+}
+
+export async function getThreatIntel() {
+  const response = await client.get('/admin/threat-intel');
+  return response.data;
+}
+
+export async function getAdaptiveTrust() {
+  const response = await client.get('/admin/trust-scores');
+  return response.data;
+}
+
+export async function importOpenApiSpec(spec) {
+  const response = await client.post('/admin/openapi/import', spec);
+  return response.data;
+}
+
 // Live decision stream (gateway: EventHub + @app.websocket("/ws/events")).
 //
 // The key goes in the query string rather than a header because a browser
