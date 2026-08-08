@@ -13,9 +13,11 @@ CAUTION about --loop / repeated runs: phase_attacks deliberately fires every
 attack class from one real source IP, on purpose - phase 4 exists specifically
 to prove a barrage from your own machine doesn't collaterally block your own
 legitimate traffic, and that only holds if everything genuinely comes from one
-IP. But a single pass already produces ~9-10 hard, hostile-classified blocks
-(BOLA, alg=none, bad signature, malformed JWT, continued enumeration), which
-sits right at auto_block_ip_threshold (10 in 60s, config.py). Verified by
+IP. A single pass already produces close to a dozen hard, hostile-classified
+blocks (BOLA, alg=none, bad signature, malformed JWT, continued enumeration,
+the chain phase's two BOLA hits), against auto_block_ip_threshold (10 in 60s,
+config.py) — verified against a live run, still 0 false positives on a clean
+Redis, but with less headroom than before. Verified by
 running this file twice in a row against the same live gateway: the second
 run's own case 6 (expects "challenge") comes back "block" and an unrelated
 benign case (bob reading his own account) genuinely fails - not a detection
@@ -247,6 +249,126 @@ def phase_attacks(sim):
     sim.rows.append(("attack", f"12. Excessive data exposure — ssn masked for owner ({detail}) (API3)",
                      "allow+masked", f"{decision}+{'masked' if ssn_masked else 'UNMASKED'}", risk, 0.0, ok))
 
+    # 15. Shadow endpoint — a real-world pattern: an old API version, a debug
+    #     route, or a field the docs forgot, still live behind the gateway but
+    #     never added to routes.json. The detector for this (API9, improper
+    #     inventory management) has existed since security_checks.py's four-
+    #     detector expansion, but until now nothing in this suite ever proved
+    #     it fires — the OWASP coverage table listed API9 "Covered" on the
+    #     strength of code review, not a live case. It's deliberately a soft,
+    #     informational-only signal (weight 30, well under both thresholds)
+    #     so an unlisted path a real integration legitimately needs is
+    #     visible, not broken — the expected verdict is "observe", not block.
+    shadow_actor = mint("shadow_probe")
+    sim.case("attack", "15. Shadow endpoint — unlisted /api/ path (API9)", "observe",
+             "GET", "/api/accounts/1001/export", shadow_actor)
+
+    # 16. Security misconfiguration self-audit — same story as case 15: API8's
+    #     detector (audit_config, /admin/config-audit) has existed since the
+    #     same expansion and was never actually called by the suite that
+    #     certifies coverage. This isn't attack traffic — an operator or CI
+    #     job calls this endpoint directly — so it's checked structurally
+    #     rather than by decision header: the endpoint must be live, return
+    #     200, and report a real, structured verdict.
+    admin_hdr = {"X-Admin-Key": settings.admin_api_key}
+    try:
+        r16 = httpx.get(f"{sim.gateway}/admin/config-audit", headers=admin_hdr, timeout=5)
+        body16 = r16.json()
+        audit_ok = (
+            r16.status_code == 200
+            and isinstance(body16.get("clean"), bool)
+            and isinstance(body16.get("warnings"), list)
+        )
+        detail16 = f"clean={body16.get('clean')}, {body16.get('warning_count')} warning(s)"
+    except Exception as exc:
+        audit_ok = False
+        detail16 = f"unreachable: {exc}"
+    sim.rows.append(("attack", f"16. Security misconfiguration audit is live ({detail16}) (API8)",
+                     "200+structured", "200+structured" if audit_ok else "FAIL", "-", 0.0, audit_ok))
+
+
+def phase_attack_chain(sim):
+    """One attacker identity, one session, in order — recon, exploit, escalate,
+    pivot, evade. Every other case in phase_attacks proves a single request
+    gets the right verdict in isolation; nothing in the suite before this
+    proved those verdicts hold together as an actual attacker's session, which
+    is the more convincing and more realistic shape a real incident takes.
+
+    Every step reuses an existing, already-proven detector — no new detection
+    logic is introduced here. What's new is the sequencing and two assertions
+    that only make sense across multiple requests from the same identity:
+    that response-masking and precise, request-scoped blocking keep working
+    correctly mid-attack, and that being caught twice doesn't get this
+    identity's own legitimate traffic collaterally punished (auto-escalation
+    needs 3 hostile hits in the window; this chain deliberately produces
+    exactly 2 — bola_cross_user twice — bfla_role_violation is intentionally
+    excluded from that count, see HOSTILE_ESCALATION_DETECTORS in main.py —
+    so step 5 is a real test of "under the threshold", not a lucky pass).
+
+    This is also, quietly, the first case in the suite that ever exercises
+    the dashboard's "Recon then exploit" saved hunt (frontend/src/api/
+    analysis.js) with traffic actually shaped like what it looks for: at
+    least two clean requests from an identity before its first hostile one.
+    Every other case's identity is hostile from request one, which is why
+    that hunt has been real, built, and reachable in the UI, but never once
+    populated by anything in this suite until this phase.
+    """
+    chain_id = f"chain_attacker_{int(time.time())}"
+    token = mint(chain_id)
+
+    # 1. Recon — probe a couple of ID slots nobody has touched yet. Ownership
+    #    is first-touch, so these reads are genuinely unremarkable: exactly
+    #    what a first-time legitimate caller looks like too. This is why a
+    #    fixed-threshold detector can't catch this step, and doesn't need to.
+    recon_obj = f"93{int(time.time())}"
+    sim.case("chain", "recon 1 — probe an untouched object id", "allow",
+             "GET", f"/api/accounts/{recon_obj}", token)
+    sim.case("chain", "recon 2 — probe a second untouched id", "allow",
+             "GET", f"/api/accounts/{recon_obj}1", token)
+
+    # 2. Exploit — recon over, go straight for a real, seeded, owned object
+    #    (alice's account). This is the BOLA moment: OWASP API1, the exact
+    #    T-Mobile/Optus pattern, now happening as the third request of a
+    #    session that looked clean for the first two.
+    sim.case("chain", "exploit — BOLA on a real victim account (API1)", "block",
+             "GET", "/api/accounts/1001", token)
+
+    # 3. Escalate — horizontal failed, try vertical: the same identity reaches
+    #    for an admin-only function next, the real behaviour of an attacker
+    #    who still has a live session and is looking for any way in.
+    sim.case("chain", "escalate — same identity tries an admin route (API5)", "block",
+             "GET", "/api/admin/users", token)
+
+    # 4. Pivot — a real, common gap in other systems: object-level auth
+    #    enforced on the primary endpoint but forgotten on a nested
+    #    sub-resource of the same object. Proves this gateway doesn't have
+    #    that gap — object_param resolution is shared, so the sibling
+    #    endpoint is exactly as protected as the one already blocked.
+    sim.case("chain", "pivot — same victim, sibling endpoint (API1)", "block",
+             "GET", "/api/accounts/1001/transactions", token)
+
+    # 5. Evade — slow down and go back to touching only what this identity
+    #    actually owns. The safety property: two real, confirmed hostile
+    #    hits from this identity (step 2 and step 4) is proportionate
+    #    evidence, not a life sentence — auto-escalation needs 3 in the
+    #    window, so this identity is never blocked outright here. A bare
+    #    "block" would mean the gateway is over-punishing, exactly the
+    #    failure mode this platform is measured against.
+    #
+    #    also_ok=("observe",): by this point in a full suite run, the
+    #    "account" resource has usually already crossed autonomous hardening's
+    #    OWN independent bar — bob's case 1 and scanner's case 8 are two more
+    #    real, distinct attackers against the same resource, landed earlier
+    #    in phase_attacks, and this chain's own step 2 makes three. That's a
+    #    second, genuinely correct mechanism doing its job, not a false
+    #    positive: "observe" still means 200, real data, no interruption —
+    #    see resource_hardening_signal's docstring and phase_benign's
+    #    identical account_also_ok pattern for why. What must never happen
+    #    here is "challenge" or "block" — verified separately by case 14.
+    time.sleep(1.0)
+    sim.case("chain", "evade — same identity reads its own object again", "allow",
+             "GET", f"/api/accounts/{recon_obj}", token, also_ok=("observe",))
+
 
 def phase_behavioural(sim):
     """The attack no fixed threshold catches.
@@ -381,8 +503,10 @@ def report(sim, gateway):
 
     attacks = [r for r in sim.rows if r[0] == "attack"]
     benign = [r for r in sim.rows if r[0].startswith("benign")]
+    chain = [r for r in sim.rows if r[0] == "chain"]
     detected = sum(1 for r in attacks if r[6])
     false_pos = [r for r in benign if not r[6]]
+    chain_ok = sum(1 for r in chain if r[6])
 
     print("=" * 96)
     print(f"Attack classes detected : {detected}/{len(attacks)}"
@@ -390,6 +514,9 @@ def report(sim, gateway):
     print(f"Legitimate requests     : {len(benign) - len(false_pos)}/{len(benign)} correctly allowed")
     print(f"False positives         : {len(false_pos)}"
           + ("" if not false_pos else "   <-- " + "; ".join(r[1] for r in false_pos)))
+    if chain:
+        print(f"Attack chain scenario   : {chain_ok}/{len(chain)} steps correct"
+              f"   (recon -> BOLA -> BFLA -> pivot -> evade, one identity)")
 
     # Gateway decision overhead, measured by the gateway itself and read back
     # from the audit log. This is the number BACKEND.md's <15ms budget refers to:
@@ -410,7 +537,7 @@ def report(sim, gateway):
         print(f"(admin API not readable for latency/counters: {exc})")
     print("=" * 96)
 
-    return len(false_pos) == 0 and detected == len(attacks)
+    return len(false_pos) == 0 and detected == len(attacks) and chain_ok == len(chain)
 
 
 def run_once(gateway):
@@ -419,6 +546,8 @@ def run_once(gateway):
     phase_benign(sim)
     print("-- phase 2: the attack suite ------------------------------------------")
     phase_attacks(sim)
+    print("-- phase 2b: one attacker, one session (recon -> exploit -> evade) ----")
+    phase_attack_chain(sim)
     # This phase was written but never called, so the one detector that needs a
     # learned baseline went untested by the suite that certifies the product.
     # It is also the only phase that exercises the control plane at all: every
