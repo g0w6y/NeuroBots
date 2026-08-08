@@ -63,3 +63,21 @@ class AccessGraph:
             "nodes": self.graph.number_of_nodes(),
             "edges": self.graph.number_of_edges(),
         }
+
+    def export_graph(self) -> dict:
+        """Nodes/edges for the dashboard's network graph view (Jeevan George /
+        j33v4nz, merged 2026-08-08) - reshapes this same access graph, no new
+        data collected."""
+        nodes = []
+        for node in self.graph.nodes():
+            if str(node).startswith("user:"):
+                nodes.append({"id": node, "type": "user", "label": str(node).split(":", 1)[1]})
+            elif str(node).startswith("obj:"):
+                parts = str(node).split(":")
+                resource = parts[1] if len(parts) > 1 else "unknown"
+                obj_id = parts[2] if len(parts) > 2 else ""
+                nodes.append({"id": node, "type": "resource", "label": obj_id, "resource": resource})
+            else:
+                nodes.append({"id": str(node), "type": "unknown", "label": str(node)})
+        edges = [{"source": str(u), "target": str(v)} for u, v in self.graph.edges()]
+        return {"nodes": nodes, "edges": edges}

@@ -672,5 +672,164 @@ class SharedStore:
             self._degrade("reset_redis_runtime_state", e)
         return removed
 
+    async def get_graph_data(self) -> dict:
+        """Interactive user<->endpoint<->resource access graph for the
+        dashboard (Jeevan George / j33v4nz, feature/network-access-graph,
+        merged 2026-08-08). Built from real ownership grants and real ML
+        profiles - the same data already backing BOLA checks and the ML
+        risk signal, just reshaped into nodes/edges. A cross-tenant edge
+        (a subject touching a resource its owners list doesn't include) is
+        flagged the same way check_bola already flags it - this is a new
+        view on existing decisions, not a new detector."""
+        grants = await self.list_ownership()
+        profiles = await self.list_ml_profiles()
+
+        nodes_dict = {}
+        edges_dict = {}
+
+        endpoints = [
+            {"id": "ep:/api/accounts", "label": "/api/accounts", "type": "endpoint", "resource": "account"},
+            {"id": "ep:/api/transfers", "label": "/api/transfers", "type": "endpoint", "resource": "transfer"},
+            {"id": "ep:/api/admin", "label": "/api/admin", "type": "endpoint", "resource": "admin"},
+        ]
+        for ep in endpoints:
+            nodes_dict[ep["id"]] = ep
+
+        for g in grants:
+            res_type = g["resource"]
+            obj_id = g["object_id"]
+            res_node_id = f"res:{res_type}:{obj_id}"
+
+            if res_node_id not in nodes_dict:
+                nodes_dict[res_node_id] = {
+                    "id": res_node_id,
+                    "label": obj_id,
+                    "type": "resource",
+                    "resource": res_type,
+                    "owners": g["owners"],
+                    "fan_in": g["fan_in"],
+                }
+
+            ep_node_id = f"ep:/api/{res_type}s" if res_type in ("account", "transfer") else f"ep:/api/{res_type}"
+            if ep_node_id not in nodes_dict:
+                ep_node_id = f"ep:/api/{res_type}"
+                nodes_dict[ep_node_id] = {"id": ep_node_id, "label": f"/api/{res_type}", "type": "endpoint", "resource": res_type}
+
+            for owner in g["owners"]:
+                user_node_id = f"user:{owner}"
+                if user_node_id not in nodes_dict:
+                    nodes_dict[user_node_id] = {
+                        "id": user_node_id,
+                        "label": owner,
+                        "type": "user",
+                        "role": "admin" if "admin" in owner.lower() else "user",
+                        "status": "normal"
+                    }
+
+                u_ep_edge_id = f"{user_node_id}->{ep_node_id}"
+                if u_ep_edge_id not in edges_dict:
+                    edges_dict[u_ep_edge_id] = {
+                        "id": u_ep_edge_id,
+                        "source": user_node_id,
+                        "target": ep_node_id,
+                        "is_anomalous": False,
+                        "is_cross_tenant": False,
+                        "label": "owns/accesses"
+                    }
+
+                ep_res_edge_id = f"{ep_node_id}->{res_node_id}"
+                if ep_res_edge_id not in edges_dict:
+                    edges_dict[ep_res_edge_id] = {
+                        "id": ep_res_edge_id,
+                        "source": ep_node_id,
+                        "target": res_node_id,
+                        "is_anomalous": False,
+                        "is_cross_tenant": False,
+                        "label": "manages"
+                    }
+
+        for prof in profiles:
+            subject = prof.get("subject", "")
+            if not subject:
+                continue
+            user_node_id = f"user:{subject}"
+            status = "blocked" if prof.get("known_attacker") else ("flagged" if (prof.get("ml_risk") or 0) > 60 else "normal")
+            if user_node_id not in nodes_dict:
+                nodes_dict[user_node_id] = {
+                    "id": user_node_id,
+                    "label": subject,
+                    "type": "user",
+                    "role": "attacker" if prof.get("known_attacker") else "user",
+                    "status": status,
+                    "ml_risk": prof.get("ml_risk")
+                }
+            else:
+                nodes_dict[user_node_id]["status"] = status
+                nodes_dict[user_node_id]["ml_risk"] = prof.get("ml_risk")
+
+            requests = prof.get("requests", [])
+            for req in requests:
+                endpoint = req.get("endpoint", "")
+                obj_id = req.get("object_id", "")
+                resource = req.get("resource", "account")
+                if not endpoint:
+                    continue
+
+                ep_node_id = f"ep:{endpoint}"
+                if ep_node_id not in nodes_dict:
+                    nodes_dict[ep_node_id] = {"id": ep_node_id, "label": endpoint, "type": "endpoint", "resource": resource}
+
+                res_node_id = f"res:{resource}:{obj_id}" if obj_id else ""
+                if res_node_id and res_node_id not in nodes_dict:
+                    nodes_dict[res_node_id] = {
+                        "id": res_node_id,
+                        "label": obj_id,
+                        "type": "resource",
+                        "resource": resource,
+                        "owners": [],
+                        "fan_in": 0
+                    }
+
+                is_cross_tenant = False
+                res_node = nodes_dict.get(res_node_id)
+                if res_node and res_node.get("owners"):
+                    if subject not in res_node["owners"]:
+                        is_cross_tenant = True
+
+                u_ep_edge_id = f"{user_node_id}->{ep_node_id}"
+                if u_ep_edge_id not in edges_dict or is_cross_tenant:
+                    edges_dict[u_ep_edge_id] = {
+                        "id": u_ep_edge_id,
+                        "source": user_node_id,
+                        "target": ep_node_id,
+                        "is_anomalous": is_cross_tenant or status != "normal",
+                        "is_cross_tenant": is_cross_tenant,
+                        "label": "CROSS-TENANT BOLA" if is_cross_tenant else "access"
+                    }
+
+                if res_node_id:
+                    ep_res_edge_id = f"{ep_node_id}->{res_node_id}"
+                    if ep_res_edge_id not in edges_dict or is_cross_tenant:
+                        edges_dict[ep_res_edge_id] = {
+                            "id": ep_res_edge_id,
+                            "source": ep_node_id,
+                            "target": res_node_id,
+                            "is_anomalous": is_cross_tenant or status != "normal",
+                            "is_cross_tenant": is_cross_tenant,
+                            "label": "CROSS-TENANT BOLA" if is_cross_tenant else "targets"
+                        }
+
+        return {
+            "nodes": list(nodes_dict.values()),
+            "edges": list(edges_dict.values()),
+            "stats": {
+                "user_count": sum(1 for n in nodes_dict.values() if n["type"] == "user"),
+                "endpoint_count": sum(1 for n in nodes_dict.values() if n["type"] == "endpoint"),
+                "resource_count": sum(1 for n in nodes_dict.values() if n["type"] == "resource"),
+                "anomalous_edge_count": sum(1 for e in edges_dict.values() if e.get("is_anomalous")),
+                "cross_tenant_edge_count": sum(1 for e in edges_dict.values() if e.get("is_cross_tenant")),
+            }
+        }
+
 
 store = SharedStore()

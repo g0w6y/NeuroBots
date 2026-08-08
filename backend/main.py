@@ -1319,6 +1319,16 @@ async def ml_status():
     }
 
 
+@app.get("/admin/graph", dependencies=[Depends(require_admin)])
+async def get_access_graph():
+    """Interactive user<->endpoint<->resource access graph (Jeevan George /
+    j33v4nz, feature/network-access-graph, merged 2026-08-08). Reshapes real
+    ownership grants and real ML profiles into nodes/edges - not a new
+    detector, a new view on the same data check_bola and the ML worker
+    already use."""
+    return await store.get_graph_data()
+
+
 @app.get("/admin/config-audit", dependencies=[Depends(require_admin)])
 async def config_audit():
     # API8:2023 security misconfiguration - self-audit of this gateway's own

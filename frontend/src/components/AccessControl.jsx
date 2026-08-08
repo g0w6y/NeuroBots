@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { getOwnership, grantOwnership, getRevocations, revokeToken } from '../api/gateway.js';
+import { getOwnership, grantOwnership, getRevocations, revokeToken, getGraph } from '../api/gateway.js';
 import { useResource } from '../hooks/useResource.js';
+import NetworkGraph from './NetworkGraph.jsx';
 
 // Access Control: the authorization data itself, rather than its consequences.
 //
@@ -17,7 +18,9 @@ import { useResource } from '../hooks/useResource.js';
 
 export default function AccessControl({ entities, incidents }) {
   const { data, state, error, refresh } = useResource(getOwnership);
+  const graphResource = useResource(getGraph);
   const revocations = useResource(getRevocations);
+  const [activeTab, setActiveTab] = useState('graph');
   const [form, setForm] = useState({ resource: 'account', objectId: '', subject: '' });
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
@@ -104,7 +107,40 @@ export default function AccessControl({ entities, incidents }) {
         <Stat label="Revoked tokens" value={revoked.length} tone={revoked.length ? 'caution' : 'default'} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      {/* View switcher: interactive network access graph vs. the grants table.
+          Both real data - the graph is store.py's get_graph_data() reshaping
+          the same ownership grants and ML profiles the table below reads
+          directly (Jeevan George / j33v4nz, merged 2026-08-08). */}
+      <div className="flex items-center gap-2 border-b border-white/10 pb-1 font-mono text-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('graph')}
+          className={`flex items-center gap-2 rounded-t px-4 py-2 font-semibold transition-colors ${
+            activeTab === 'graph'
+              ? 'border-b-2 border-accent bg-accent/10 text-accent'
+              : 'text-ink-muted hover:bg-canvas-raised/50 hover:text-ink'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[16px]">hub</span>
+          Interactive Access Graph
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('table')}
+          className={`flex items-center gap-2 rounded-t px-4 py-2 font-semibold transition-colors ${
+            activeTab === 'table'
+              ? 'border-b-2 border-accent bg-accent/10 text-accent'
+              : 'text-ink-muted hover:bg-canvas-raised/50 hover:text-ink'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[16px]">table_chart</span>
+          Ownership Grants Table
+        </button>
+      </div>
+
+      {activeTab === 'graph' && <NetworkGraph data={graphResource.data} />}
+
+      <div className={`grid gap-4 lg:grid-cols-[1fr_320px] ${activeTab === 'graph' ? 'hidden' : ''}`}>
         {/* ---------------------------------------------------------- grants */}
         <div className="glass-panel overflow-hidden rounded-lg">
           <div className="flex flex-wrap items-center gap-3 border-b border-canvas-line px-4 py-3">
