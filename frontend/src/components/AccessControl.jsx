@@ -92,7 +92,7 @@ export default function AccessControl({ entities, incidents }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="Ownership grants" value={grants.length} />
         <Stat label="Known identities" value={entities.length} />
         <Stat label="Flagged" value={flagged.length} tone={flagged.length ? 'caution' : 'default'} />
