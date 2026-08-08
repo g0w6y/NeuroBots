@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 
-// ProjectZero design system — Material 3 dark, cool obsidian + cyber blue.
+// Project0 design system — Material 3 dark, cool obsidian + cyber blue.
 //
 // The existing semantic names (canvas/ink/accent/risk) are kept and remapped to
 // the new palette rather than renamed. Every component already speaks in those
@@ -44,7 +44,7 @@ export default {
           'danger-dim': '#93000a'
         },
 
-        // M3 role names, for the ProjectZero shell markup
+        // M3 role names, for the Project0 shell markup
         surface: {
           DEFAULT: '#131315',
           container: '#201f22',

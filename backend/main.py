@@ -42,7 +42,7 @@ def require_admin(x_admin_key: str = Header(default="")):
 
 
 app = FastAPI(
-    title="NeuroBots API Security Gateway",
+    title="Project0 API Security Gateway",
     # FastAPI mounts /docs, /redoc and /openapi.json at construction, i.e. ahead
     # of the catch-all proxy route. That published the whole admin surface to
     # anyone who asked, with no X-Admin-Key, and simultaneously made those three

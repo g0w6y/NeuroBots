@@ -1,4 +1,4 @@
-# How To Run NeuroBots — Live Demo Guide
+# How To Run Project0 — Live Demo Guide
 
 Every command below was run, in this exact order, from a genuine clean slate
 (no containers, no processes) on 2026-08-08 before this file was written —
@@ -29,8 +29,8 @@ see "Running without Docker" below if you don't have it).
 ### Terminal 1 — Redis
 
 ```bash
-docker run -d --name neurobots-redis -p 6379:6379 redis:7-alpine
-docker exec neurobots-redis redis-cli PING
+docker run -d --name project0-redis -p 6379:6379 redis:7-alpine
+docker exec project0-redis redis-cli PING
 ```
 
 Expect `PONG`. This is what makes BOLA ownership, rate limits, and
@@ -39,10 +39,10 @@ escalation state real and shared instead of single-process in-memory.
 ### Terminal 2 — PostgreSQL
 
 ```bash
-docker run -d --name neurobots-postgres -p 5432:5432 \
-  -e POSTGRES_USER=user -e POSTGRES_PASSWORD=password -e POSTGRES_DB=neurobots \
+docker run -d --name project0-postgres -p 5432:5432 \
+  -e POSTGRES_USER=user -e POSTGRES_PASSWORD=password -e POSTGRES_DB=project0 \
   postgres:15-alpine
-docker exec neurobots-postgres pg_isready -U user
+docker exec project0-postgres pg_isready -U user
 ```
 
 Expect `accepting connections`. Give it 3–5 seconds after `docker run`
@@ -174,8 +174,8 @@ print(jwt.encode({'sub':'not_bob','roles':['user'],'iat':now,'nbf':now-10,'exp':
 
 ```bash
 # Ctrl-C in terminals 3, 4, 5, 6 (or: pkill -f "demo_upstream.py|main.py|worker.py|vite")
-docker stop neurobots-redis neurobots-postgres
-docker rm neurobots-redis neurobots-postgres
+docker stop project0-redis project0-postgres
+docker rm project0-redis project0-postgres
 ```
 
 ## The one-command alternative

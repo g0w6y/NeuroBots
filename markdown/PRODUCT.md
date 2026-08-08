@@ -1,10 +1,10 @@
-# NeuroBots Product
+# Project0 Product
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection Platform
 
-## What is NeuroBots
+## What is Project0
 
-NeuroBots is an API security gateway that sits between clients and your APIs. It monitors every request in real time, detects authorization attacks, and blocks them automatically with zero false positives.
+Project0 is an API security gateway that sits between clients and your APIs. It monitors every request in real time, detects authorization attacks, and blocks them automatically with zero false positives.
 
 ## The Problem
 
@@ -19,17 +19,17 @@ Real breaches:
 
 ## The Solution
 
-NeuroBots validates every API request in real time. It checks:
+Project0 validates every API request in real time. It checks:
 - Is the token real and not expired
 - Does this user actually own this object
 - Does this user have permission to use this function
 - Is the user rate limiting being exceeded
 
-If any check fails, NeuroBots blocks the request before it reaches your API. Every decision is explained with the exact reason (OWASP API Top 10 category and MITRE ATT&CK technique).
+If any check fails, Project0 blocks the request before it reaches your API. Every decision is explained with the exact reason (OWASP API Top 10 category and MITRE ATT&CK technique).
 
 ## How It Works
 
-1. Request comes in through NeuroBots gateway on port 8080
+1. Request comes in through Project0 gateway on port 8080
 2. Gateway validates the JWT token
 3. Gateway checks if user owns the requested object (stored in Redis)
 4. Gateway checks if user has permission for this function
@@ -74,9 +74,9 @@ Latency: p99 under 15 milliseconds
 
 Throughput: 8,000+ requests per second
 
-## Why NeuroBots Wins
+## Why Project0 Wins
 
-Existing API security tools are signature based (miss authorization attacks) or expensive closed source platforms. NeuroBots is:
+Existing API security tools are signature based (miss authorization attacks) or expensive closed source platforms. Project0 is:
 
 Open source: build it yourself, no vendor lock in
 

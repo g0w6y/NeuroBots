@@ -1,4 +1,4 @@
-# NeuroBots Zero-Trust API Security Gateway
+# Project0 Zero-Trust API Security Gateway
 
 Fast, deterministic detection of BOLA, BFLA, JWT attacks, and rate abuse.
 

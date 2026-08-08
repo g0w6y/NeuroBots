@@ -1,4 +1,4 @@
-# Deploying NeuroBots
+# Deploying Project0
 
 ## Local / demo
 
@@ -34,7 +34,7 @@ Six things, in order of how badly they bite:
    incidents, entities and ownership provisioning. Not CORS. This header.
 3. **`CORS_ALLOWED_ORIGINS`.** Defaults to `*`. Set it to your dashboard's exact
    origin.
-4. **`POSTGRES_PASSWORD`.** Defaults to `neurobots`.
+4. **`POSTGRES_PASSWORD`.** Defaults to `project0`.
 5. **`TRUSTED_PROXIES`.** Empty by default, which is the safe setting — the
    socket peer is used as the client address. If you deploy behind a load
    balancer you *must* set this to the balancer's address or every client will

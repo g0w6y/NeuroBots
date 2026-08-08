@@ -1,4 +1,4 @@
-# Project Memory — NeuroBots Zero-Trust API Security Gateway
+# Project Memory — Project0 Zero-Trust API Security Gateway
 
 Status doc for team continuity. Last updated 2026-08-08. Read this before making changes so you don't redo or undo work that's already been fixed and verified.
 
@@ -167,7 +167,7 @@ A gateway that sits in front of an API and blocks authorization attacks in real 
 (scikit-learn), Markov chain sequence modeling, NetworkX graph analysis. What
 existed before this was `agents.py` - genuinely useful, genuinely tested, but
 hand-written threshold rules, not ML. That gap is now closed for real: `ml/`
-(sibling to `backend/` in the NeuroBots repo, deliberately NOT nested inside
+(sibling to `backend/` in the Project0 repo, deliberately NOT nested inside
 `backend/` - `ML.md`'s own docker-compose treats it as a separate top-level
 service, and nesting it would also create an import collision with
 `backend/config.py`) is a standalone async worker doing exactly what was
@@ -285,7 +285,7 @@ trusted-proxies config for a real load balancer.
 
 ## Frontend connection + demo upstream
 
-Connected to the real dashboard (neurobots-frontend / NeuroBots repo's frontend/) this
+Connected to the real dashboard (project0-frontend / Project0 repo's frontend/) this
 session, not just built alongside it. Found and fixed three real bugs that only show up
 when something outside this process actually consumes the responses: no CORS (browsers
 can't call a cross-origin API without it), a naive-timestamp bug (datetime.utcnow().isoformat()

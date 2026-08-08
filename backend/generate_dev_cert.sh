@@ -12,7 +12,7 @@ openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout "$CERT_DIR/gateway.key" \
     -out "$CERT_DIR/gateway.crt" \
     -days 365 \
-    -subj "/CN=localhost/O=NeuroBots Dev" \
+    -subj "/CN=localhost/O=Project0 Dev" \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 echo ""

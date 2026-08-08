@@ -1,4 +1,4 @@
-# NeuroBots Demo Recording Script
+# Project0 Demo Recording Script
 
 I could not record an actual video file - I have no screen-recording or
 video-capture capability in this environment. What's here instead is a
@@ -9,10 +9,10 @@ working this session, for you or a teammate to record for real.
 or "Record Selected Portion," click Record. Stop with Cmd+Shift+5 again or
 the menu-bar stop button. Takes one try if you follow this script.
 
-**Save the result here:** `video/neurobots_demo.mp4` (or `.mov`), then:
+**Save the result here:** `video/project0_demo.mp4` (or `.mov`), then:
 ```bash
-cd /Users/gourisankara/neurobots-main
-git add video/neurobots_demo.mp4
+cd /Users/gourisankara/project0-main
+git add video/project0_demo.mp4
 git commit -m "Add demo recording"
 git push origin main
 ```
@@ -23,7 +23,7 @@ Get everything running first so the recording itself has zero dead air
 waiting for services to start:
 
 ```bash
-cd /Users/gourisankara/neurobots-main
+cd /Users/gourisankara/project0-main
 python3 run.py
 ```
 
@@ -35,7 +35,7 @@ in a browser tab now, before recording, so the tab is already loaded.
 **0:00 - 0:20 | Cold open**
 Show the terminal with `run.py`'s output on screen for a few seconds -
 Redis, Postgres, upstream, gateway, ML worker, dashboard all coming up
-with real health checks. Say: "This is NeuroBots, a Zero-Trust API
+with real health checks. Say: "This is Project0, a Zero-Trust API
 Security Gateway. One command starts the whole stack - no mocks, no
 canned data."
 
@@ -49,7 +49,7 @@ attacks."
 **0:45 - 1:30 | Fire the attack suite**
 Switch to a second terminal:
 ```bash
-cd /Users/gourisankara/neurobots-main/backend
+cd /Users/gourisankara/project0-main/backend
 python3 attack_sim/simulate.py
 ```
 Let it run on screen - real HTTP requests hitting the real gateway. Say
@@ -83,7 +83,7 @@ be something an LLM could hallucinate."
 **3:15 - 3:40 | Prove one attack directly**
 Back to a terminal:
 ```bash
-curl -s http://127.0.0.1:8080/api/accounts/1002 -H "Authorization: Bearer $(cd /Users/gourisankara/neurobots-main/backend && python3 -c "
+curl -s http://127.0.0.1:8080/api/accounts/1002 -H "Authorization: Bearer $(cd /Users/gourisankara/project0-main/backend && python3 -c "
 import time, jwt
 from config import settings
 now = int(time.time())

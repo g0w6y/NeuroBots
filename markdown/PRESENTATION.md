@@ -1,4 +1,4 @@
-# NeuroBots: Round 2 Presentation Source
+# Project0: Round 2 Presentation Source
 
 Source material for the team to build the actual PPT from. Every technical
 claim below is something that was actually built and verified in this
@@ -19,7 +19,7 @@ best-case ones from earlier in the build.
   - Aleena Shaji: Frontend
   - Mariya Liss: Frontend
 - **College Name:** `[FILL IN]`
-- **Repo:** github.com/g0w6y/NeuroBots
+- **Repo:** github.com/g0w6y/Project0
 
 ## Slide 2: Problem Statement
 
@@ -44,7 +44,7 @@ enforcement in front of their APIs without rewriting the APIs themselves.
 
 ## Slide 3: Proposed Solution
 
-**The solution:** NeuroBots is a Zero-Trust API Security Gateway. Every
+**The solution:** Project0 is a Zero-Trust API Security Gateway. Every
 request is inspected before it reaches the real API, and decided in real
 time using both deterministic rules and real trained ML behavioral models.
 
@@ -123,7 +123,7 @@ dependency.
 
 ## Slide 5: Current Progress
 
-**GitHub Repository:** github.com/g0w6y/NeuroBots, actively developed.
+**GitHub Repository:** github.com/g0w6y/Project0, actively developed.
 Every claim below is committed and pushed, not local-only.
 
 **What's actually built and verified, not just planned:**

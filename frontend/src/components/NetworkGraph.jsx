@@ -349,7 +349,7 @@ export default function NetworkGraph({ data, onSelectNode }) {
               className="rounded border-canvas-line text-risk-danger focus:ring-risk-danger"
             />
             <span className={filterAnomalousOnly ? 'font-semibold text-risk-danger' : ''}>
-              Flashing Anomalies Only
+              Anomalies Only
             </span>
           </label>
         </div>

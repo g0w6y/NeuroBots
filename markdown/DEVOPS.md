@@ -85,9 +85,9 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: neurobots
+      POSTGRES_USER: project0
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: neurobots
+      POSTGRES_DB: project0
     ports:
       - "5432:5432"
     volumes:
@@ -98,7 +98,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     environment:
-      DATABASE_URL: postgresql://neurobots:password@postgres:5432/neurobots
+      DATABASE_URL: postgresql://project0:password@postgres:5432/project0
       REDIS_URL: redis://redis:6379
       JWT_SECRET: secret key
       UPSTREAM_URL: http://demo-api:9000
@@ -351,7 +351,7 @@ Create a shell script that:
 
 ```bash
 #!/bin/bash
-echo "Starting NeuroBots..."
+echo "Starting Project0..."
 docker compose up -d --build
 
 echo "Waiting for services to be ready..."

@@ -13,7 +13,7 @@ Run standalone on :9000 (matches config.py's default upstream_url):
 
 from fastapi import FastAPI, Request
 
-app = FastAPI(title="NeuroBots Demo Upstream API")
+app = FastAPI(title="Project0 Demo Upstream API")
 
 # Deliberately over-serving. Every account carries fields a client has no business
 # receiving - a password hash, a national id, a full card number, an internal note.

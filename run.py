@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NeuroBots: one command to run the whole stack.
+Project0: one command to run the whole stack.
 
     python3 run.py
 
@@ -173,27 +173,35 @@ def start_redis_postgres():
 
     started_any = False
     for name, run_args in (
-        ("neurobots-redis", ["docker", "run", "-d", "--name", "neurobots-redis",
+        ("project0-redis", ["docker", "run", "-d", "--name", "project0-redis",
                               "-p", "6379:6379", "redis:7-alpine"]),
-        ("neurobots-postgres", ["docker", "run", "-d", "--name", "neurobots-postgres",
+        ("project0-postgres", ["docker", "run", "-d", "--name", "project0-postgres",
                                  "-p", "5432:5432",
                                  "-e", "POSTGRES_USER=user", "-e", "POSTGRES_PASSWORD=password",
-                                 "-e", "POSTGRES_DB=neurobots", "postgres:15-alpine"]),
+                                 "-e", "POSTGRES_DB=project0", "postgres:15-alpine"]),
     ):
         if docker_container_running(name):
             log(f"{name} already running, reusing it")
             continue
         if docker_container_exists(name):
             log(f"{name} exists but stopped, starting it")
-            subprocess.run(["docker", "start", name], capture_output=True, timeout=15)
-            started_any = True
+            try:
+                subprocess.run(["docker", "start", name], capture_output=True, timeout=15)
+                started_any = True
+            except Exception as e:
+                log(f"WARNING: could not start {name}: {e}")
             continue
         log(f"starting {name} ...")
-        r = subprocess.run(run_args, capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            log(f"WARNING: could not start {name}: {r.stderr.strip()[:200]}")
-        else:
-            started_any = True
+        try:
+            r = subprocess.run(run_args, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                log(f"WARNING: could not start {name}: {r.stderr.strip()[:200]}")
+            else:
+                started_any = True
+        except subprocess.TimeoutExpired:
+            log(f"WARNING: starting {name} timed out after 120s (image pull may be slow). Skipping {name}.")
+        except Exception as e:
+            log(f"WARNING: could not start {name}: {e}")
 
     if started_any:
         log("waiting a few seconds for Redis/Postgres to accept connections ...")
@@ -249,7 +257,7 @@ def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: sys.exit(0))
 
-    log("=== NeuroBots: one-command startup ===")
+    log("=== Project0: one-command startup ===")
 
     redis_up = start_redis_postgres()
 

@@ -1,5 +1,5 @@
 """
-NeuroBots ML worker (ML.md).
+Project0 ML worker (ML.md).
 
 Standalone async process. Polls the gateway's /admin/alerts for real request
 events, builds real per-entity IsolationForest models (scikit-learn), a real

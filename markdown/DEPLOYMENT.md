@@ -13,7 +13,7 @@ needs zero configuration. None of them are safe past that:
 |---|---|---|
 | `JWT_SECRET` | `demo-hs256-secret-change-me` | A real ≥32-byte random secret, or switch to `JWT_RSA_PUB_PEM` for asymmetric verification |
 | `ADMIN_API_KEY` | `changeme-admin-key` | A real random key — this is the only thing gating every `/admin/*` route |
-| `DATABASE_URL` | `postgresql://user:password@localhost/neurobots` | Real credentials, least-privilege (this account only needs `INSERT`/`SELECT` on `alerts` and `incidents`) |
+| `DATABASE_URL` | `postgresql://user:password@localhost/project0` | Real credentials, least-privilege (this account only needs `INSERT`/`SELECT` on `alerts` and `incidents`) |
 | `CORS_ALLOWED_ORIGINS` | `*` | The dashboard's actual origin(s), comma-separated |
 | `TLS_ENABLED` | `false` | `true`, with a real CA-issued cert — `generate_dev_cert.sh`'s self-signed one is for local dev only |
 

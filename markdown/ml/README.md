@@ -1,4 +1,4 @@
-# NeuroBots ML Worker
+# Project0 ML Worker
 
 **This is the one ML implementation in this repo.** A second, independently-built
 one (`ml-worker/`, Melwin's) briefly existed alongside this folder and was removed

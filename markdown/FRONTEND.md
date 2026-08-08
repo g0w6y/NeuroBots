@@ -21,8 +21,8 @@ You are building the frontend React application with Tailwind CSS and Recharts f
 Create a React app with Vite (faster than Create React App).
 
 ```bash
-npm create vite@latest neurobots-dashboard -- --template react
-cd neurobots-dashboard
+npm create vite@latest project0-dashboard -- --template react
+cd project0-dashboard
 npm install
 npm install tailwindcss recharts axios
 npx tailwindcss init -p
