@@ -520,6 +520,72 @@ repo's declared, explicit testing convention (`pytest-asyncio` is in
 requirements.txt, `anyio` is not), so keeping `asyncio` is the honest
 choice, not just the old one.
 
+Melwin (`mlwn4096`) pushed his first real commit, on branch `melwin`,
+based on an old point in main (before Jeevan's Intelligence Console
+review) - "GAT Multi-Head Self-Attention GNN engine, self-supervised
+link prediction training, high-density OLED Black & Cyber Green UI, and
+OWASP simulation suite." Reviewed in full, same standard as both Jeevan
+reviews. This one is a genuine mixed bag - the core ML work is real and
+good, several things wrapped around it are not.
+
+Real and merged: `ml/gnn.py` - a from-scratch GAT + GCN in pure numpy,
+no PyTorch/DGL. Verified this is actually real by running it, not
+reading it: fed it real access events, called `train_on_graph()` eight
+times, and watched the loss genuinely decrease (0.7236 -> 0.6789) via
+real backprop and a correctly-implemented Adam optimizer (bias
+correction included). One real overclaim caught the same way: the
+docstring said it "learns optimal weights W_edge, W_gcn, and W_gat" -
+diffed the GAT layer's weights before/after training and they never
+change. Only the GCN layer and the edge classifier actually train; the
+GAT layer runs a real forward pass (real softmax attention over real
+edges) but stays at its random initialization forever. Corrected the
+docstring rather than the behavior - full GAT backprop is real
+additional work, not a five-minute fix, and the current honest scope
+(GCN + edge classifier trained, GAT attention real-but-fixed) is
+already useful: `ml/risk.py`'s fusion, `ml/worker.py`'s wiring, and
+`ml/tests/test_gnn.py` (5 tests, all real, all pass) are all kept
+as-is. Stress-tested under a full `attack_sim` run with a live ML
+worker - the worker calls a full forward+train pass on every single
+processed event, which is O(n²) in graph size and looked like a real
+performance risk on paper; empirically it wasn't, at this scale - the
+worker never fell behind, graph topped out around 27 nodes, no crash,
+no backlog.
+
+Not merged: everything else in that commit, and for concrete reasons.
+`backend/main.py` added an "Interactive Simulator"
+(`POST /admin/simulate/run`) whose unprotected-path call has an
+`except Exception:` block that doesn't report the failure - it
+fabricates a fake vulnerable response instead (hardcoded fake account
+data, fake AWS keys, fake admin secrets, one canned body per scenario)
+and returns it as if the real upstream had genuinely produced it. This
+is worse than the LLM mislabeling caught twice already - that faked a
+label; this fakes the underlying "evidence" itself if the real call
+ever fails. `backend/store.py`'s `get_graph_data()` grew a
+`"gnn_meta"` block claiming `"architecture": "Graph Attention Network
+(GAT) with Multi-Head Self-Attention"` with a `gnn_embedding` that's
+actually `hash(node_id) % 1000` arithmetic and a `gat_attention` that's
+a hardcoded `0.85`/`0.18`/`0.88`/`0.15` constant depending on whether
+the edge is cross-tenant - none of it touches `ml/gnn.py`'s real
+model at all. `NetworkGraph.jsx` renders that fake value directly as
+`α={gat_attention}` next to real edges. The same `store.py` commit
+also reverted the resource-hardening-reset fix from the `melwin`
+branch's earlier base point - kept the fix, not the revert. The
+branch's `markdown/` changes resurrected the two stale, factually
+wrong docs already deleted this session (the ones claiming a dead
+`ml-worker/` directory still exists) and re-added `video/
+RECORDING_SCRIPT.md`, which was deleted on purpose. And
+`backend/requirements.txt`/`ml/requirements.txt` loosened the pinned
+versions back to open ranges, which is the exact regression the
+pydantic/asyncpg pins exist to prevent on Python 3.14 - kept the pins.
+`backend/tests/test_simulation.py` only tests the excluded simulator,
+so it wasn't merged either. The "OLED Black + Cyber Green" restyle
+(`tailwind.config.js`, `styles/index.css`, `AccessControl.jsx`,
+`Dashboard.jsx`) is genuinely just a cosmetic palette change, no
+fabrication in it - but it's entangled with the excluded
+`NetworkGraph.jsx` fake-GNN rendering and this review already ran very
+long, so it wasn't merged either; worth doing as its own pass if the
+team wants that look, not bundled with this one.
+
 ## What's genuinely still open
 
 1. BOLA ground truth — mitigated, not solved (see above).

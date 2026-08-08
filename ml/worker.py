@@ -170,6 +170,7 @@ class MLWorker:
 
         if decision == "block":
             profile.record_hostile()
+            self.graph.record_edge(subject, resource, object_id, now, is_blocked=True, risk_score=float(alert.get("risk", 85)))
             return
         if decision != "allow" and decision != "observe":
             return  # challenge: ambiguous, neither trains nor marks hostile
@@ -180,7 +181,7 @@ class MLWorker:
             return
 
         profile.record_allowed(endpoint, object_id, resource, now)
-        self.graph.record_edge(subject, resource, object_id, now)
+        self.graph.record_edge(subject, resource, object_id, now, is_blocked=False, risk_score=float(alert.get("risk", 0)))
         profile.maybe_retrain()
 
     async def score_and_publish(self, client: httpx.AsyncClient, subject: str, now: float) -> None:
@@ -210,8 +211,9 @@ class MLWorker:
         isolation = profile.isolation_score(last["endpoint"], last["object_id"], now)
         markov = profile.markov_score(last["endpoint"])
         novelty = self.graph.novelty_score(subject, last["resource"], last["object_id"], now)
+        gnn_score = self.graph.gnn_score(subject, last["resource"], last["object_id"])
 
-        ml_risk, breakdown = compute_ml_risk(isolation, markov, novelty)
+        ml_risk, breakdown = compute_ml_risk(isolation, markov, novelty, gnn_score)
         profile_payload.update({"ml_risk": ml_risk, "breakdown": breakdown})
 
         await self.publish(client, subject, ml_risk, profile_payload, settings.ml_risk_ttl_sec)

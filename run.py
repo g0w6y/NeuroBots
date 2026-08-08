@@ -313,7 +313,8 @@ def main():
     if frontend_started:
         log(f"dashboard : {DASHBOARD_URL}")
     log("attack suite (run in another terminal, once per gateway start):")
-    log(f"  cd backend && python3 attack_sim/simulate.py")
+    py_cmd = "python" if os.name == "nt" else "python3"
+    log(f"  cd backend && {py_cmd} attack_sim/simulate.py")
     log("")
     log("Press Ctrl-C to stop everything this script started.")
 
