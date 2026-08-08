@@ -372,6 +372,72 @@ Both found by actually running requests through the app and checking the result,
 
 Important scope note for anyone worried these fixes weakened detection: they only ever touched what feeds the escalation counter, never `fuse_signals()` itself. The per-request block/challenge/allow decision is exactly as strict as before — an expired token, a BFLA violation, a rate-limit hit still blocks that individual request every time. Only "should this also lock the identity out for 5+ minutes" changed.
 
+## Autonomous API hardening (bonus, new 2026-08-08) — genuinely distinct from autonomous mitigation above
+
+Autonomous *mitigation* (above) punishes a proven attacker — one identity or
+IP. It has nothing to say about a *resource* under sustained attack from
+many different attackers, each of whom might individually never cross their
+own identity/IP threshold. This is the missing piece: `store.py`'s
+`record_resource_attack` counts **distinct** attacker keys (not raw hostile-
+block volume — one repeat offender alone can never trigger this, identity/IP
+escalation already owns that case) hitting one resource type; once
+`resource_hardening_distinct_attackers` (default 3) distinct attackers are
+confirmed within `resource_hardening_window_sec` (default 300s), the
+resource enters a temporary hardened state (`resource_hardening_cooldown_sec`,
+default 180s) — visible at `GET /admin/hardening`, logged as a real
+`autonomous_resource_hardening` incident.
+
+**The safety design is the actual hard part, and it's the part that was
+tested hardest.** A naive version of this is a self-inflicted DoS vector: an
+attacker could cheaply manufacture "distinct attackers" to trigger hardening
+against a resource real users depend on. Two deliberate design choices close
+that:
+- `attacker_key` uses the exact same convention as identity/IP escalation
+  (subject if the JWT validated, else `ip:{ip}`). A forged or invalid token
+  never produces a validated subject — every jwt_alg_none / bad-signature /
+  malformed attempt collapses onto the *same* `ip:{ip}` key regardless of
+  what fake `sub` claim it carries, so an attacker cannot manufacture
+  distinct attacker keys by editing a JWT payload. Genuinely reaching the
+  threshold needs real distinct source IPs or real, validly-signed tokens
+  for different subjects — both substantially more expensive than editing a
+  token.
+- The resulting `resource_hardening_active` signal is deliberately weak
+  (weight 15, well under the 45 challenge threshold) and soft. Alone it can
+  only ever push a request to `observe` — visible in the audit trail, never
+  a block or challenge. It only becomes part of an actual `challenge` or
+  `block` if the request *also* carries other genuine corroborating signals,
+  same corroboration principle used everywhere else in this project.
+
+**A real bug found and fixed before this shipped, not after**: the first
+implementation awaited the resource-attack recording inline in the request's
+own response path. Verified end to end this added enough latency to the
+already-hostile-block-handling code that it made `attack_sim`'s own
+already-documented "the suite's traffic sits right at the IP auto-escalation
+edge" limitation (see the Attack Simulation Suite section above) trip
+*within a single clean run* instead of only across repeats — a real,
+measured regression (18/18 false positives on one run), not a hypothetical
+one. Fixed by making the recording fire-and-forget via the existing
+`spawn()` helper, same reasoning as `emit_alert()`'s audit write: it only
+ever affects a *future* request's signal, never the current one's already-
+decided outcome, so there was never a reason to make the response wait on it.
+
+**Verified three ways, not just built:**
+- `backend/tests/test_resource_hardening.py` — 14 unit tests against the
+  in-memory fallback path directly (distinct-attacker counting, window
+  expiry, anti-gaming via repeated-same-attacker, and the exact safety
+  property via a real call to `fuse_signals()`, not just an assertion about
+  the weight in isolation).
+- `attack_sim/simulate.py` phase 4 (cases 13-14, new) — against a real
+  running gateway with real Redis: 3 genuinely distinct attackers correctly
+  trigger hardening, and a real, unrelated owner of a *different* object of
+  the same hardened resource gets `observe` (200, real data, zero
+  interruption) — proven live, not assumed.
+- A consequence of case 13 firing: phase 5's benign-post checks for the
+  `account` resource may legitimately show `observe` instead of `allow` for
+  up to the cooldown window — `phase_benign`'s `account_also_ok` parameter
+  accounts for this explicitly rather than either failing the suite
+  spuriously or silently loosening the false-positive bar for anything else.
+
 ## Fixed bugs, in case you're wondering why something looks different than you remember
 
 - Route matching was a literal dict-key lookup against strings like `/api/accounts/{id}` compared to a real path like `/api/accounts/1001` — never matched. BOLA/BFLA/enumeration never ran on any real request until this was fixed. Now `match_route()` does real segment-pattern matching.
@@ -409,16 +475,26 @@ Full fix needs a real backend's ownership data behind this gateway. Don't invent
 
 1. BOLA ground truth — mitigated, not solved (see above).
 2. Jeevan's actual participation — invite is out, unconfirmed whether accepted.
-3. Multi-worker deployment — safe in theory now, untested in practice.
-4. `attack_sim/simulate.py` is real and lives in the repo (that objection from
-   earlier is closed), but it's still the only test coverage — no separate
-   unit-test suite. Fine for a hackathon demo; would want more before real use.
+3. ~~Multi-worker deployment — safe in theory, untested in practice.~~ Closed
+   2026-08-08: actually run with `WORKERS=3` against real Redis/Postgres,
+   rigorously re-verified (a false-pass from a reused HTTP connection was
+   caught and corrected first) — see the horizontal scaling section above.
+4. ~~No separate unit-test suite.~~ Partially closed: `ml/tests/test_ml.py`
+   (32 tests) and `backend/tests/test_resource_hardening.py` (14 tests) both
+   exist and pass for real. Still no unit coverage for the core request path
+   itself (`detect.py`'s other checks, `auth.py`) beyond what `attack_sim`
+   exercises end to end.
 5. Elasticsearch / time-series analysis — deliberately skipped, not forgotten. Postgres persistence (now done) gives a real substrate to build either on top of later, but standing up a whole separate ES service wasn't worth the operational complexity for a hackathon demo.
 6. HA reconnect for `audit_log.py` specifically (as opposed to `store.py`,
    which Nirmal verified) was not re-run against the final reconciled tree
    in this pass — quick kill/revive test worth doing before the demo if time allows.
 7. API10 (unsafe consumption of third-party APIs) intentionally not
    attempted — see "Five features" above for why it doesn't apply here.
+8. Every request touching a route with a `resource` now pays one extra
+   Redis GET (checking whether that resource is currently hardened) -
+   consistent with the already-disclosed "sequential Redis round trips add
+   up" latency finding (see PERFORMANCE.md), not a new category of cost, but
+   worth knowing if that root cause ever gets its scoped fix.
 
 ## If you're picking this up cold
 

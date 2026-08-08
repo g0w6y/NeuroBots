@@ -104,35 +104,44 @@ class Sim:
                 wall_ms,
                 None)
 
-    def case(self, phase, name, expected, method, path, token=None, body=None):
+    def case(self, phase, name, expected, method, path, token=None, body=None, also_ok=()):
         r, decision, risk, wall_ms, err = self.send(method, path, token, body)
         if err:
             self.rows.append((phase, name, expected, "UNREACHABLE", "-", wall_ms, False))
             return None
-        ok = (decision == expected)
+        ok = (decision == expected) or (decision in also_ok)
         self.rows.append((phase, name, expected, decision, risk, wall_ms, ok))
         return r
 
 
 # ------------------------------------------------------------------- the phases
 
-def phase_benign(sim, tag=""):
+def phase_benign(sim, tag="", account_also_ok=()):
     """Legitimate users doing legitimate things. Every one of these MUST be
     allowed — each unexpected block here is a false positive, and the platform's
-    headline claim is that there are none."""
+    headline claim is that there are none.
+
+    account_also_ok: extra acceptable decisions for the account-resource
+    checks specifically, not the whole phase - used post-hardening (phase 5)
+    to accept "observe" alongside "allow". This is NOT relaxing the false
+    positive bar: "observe" still means the request succeeded (200, real
+    data, no interruption) - see resource_hardening_signal's docstring for
+    why that decision can happen without ever meaning a real user was
+    punished. A "block" or "challenge" here would still, correctly, fail
+    this check regardless of account_also_ok."""
     alice = mint("alice")
     bob = mint("bob")
     root = mint("root", ["admin"])
     p = f"benign{tag}"
 
-    sim.case(p, "alice reads her own account", "allow", "GET", "/api/accounts/1001", alice)
-    sim.case(p, "alice reads her own transactions", "allow", "GET", "/api/accounts/1001/transactions", alice)
-    sim.case(p, "bob reads his own account", "allow", "GET", "/api/accounts/1002", bob)
+    sim.case(p, "alice reads her own account", "allow", "GET", "/api/accounts/1001", alice, also_ok=account_also_ok)
+    sim.case(p, "alice reads her own transactions", "allow", "GET", "/api/accounts/1001/transactions", alice, also_ok=account_also_ok)
+    sim.case(p, "bob reads his own account", "allow", "GET", "/api/accounts/1002", bob, also_ok=account_also_ok)
     sim.case(p, "admin reads the admin user list", "allow", "GET", "/api/admin/users", root)
     sim.case(p, "alice posts a legitimate transfer", "allow", "POST", "/api/transfers", alice,
              body={"from_account": "1001", "to_account": "1002", "amount": 25.00})
     for i in range(4):
-        sim.case(p, f"alice re-reads her account ({i + 1})", "allow", "GET", "/api/accounts/1001", alice)
+        sim.case(p, f"alice re-reads her account ({i + 1})", "allow", "GET", "/api/accounts/1001", alice, also_ok=account_also_ok)
 
 
 def phase_attacks(sim):
@@ -294,6 +303,69 @@ def phase_behavioural(sim):
                      "challenge", decision, risk, 0.0, decision == "challenge"))
 
 
+def phase_hardening(sim):
+    """Autonomous API hardening (bonus): distinct from every other case here,
+    which each prove a single request gets a correct verdict. This proves a
+    multi-request, multi-attacker CONSEQUENCE: enough distinct attackers
+    against one resource and the gateway raises that resource's own bar on
+    its own, with nobody telling it to - and does so without ever punishing
+    a real, unrelated user of that resource, which is the actual hard part.
+
+    Needs 3 DISTINCT attacker identities (not one identity three times -
+    that's what identity-level auto-escalation already owns, see case 1-9
+    above) genuinely blocked against the SAME resource type, run with real
+    spacing so the gateway's fire-and-forget recording (deliberately kept
+    off the request's own response path - see main.py's maybe_harden_resource)
+    has time to land before we check. A tight loop with no spacing was
+    measured under-triggering for exactly this reason during development;
+    this phase's pacing is not cosmetic.
+    """
+    account1, account2, account3 = f"96{int(time.time())}1", f"96{int(time.time())}2", f"96{int(time.time())}3"
+    owner1, owner2, owner3 = mint(f"hard_owner1_{int(time.time())}"), mint(f"hard_owner2_{int(time.time())}"), mint(f"hard_owner3_{int(time.time())}")
+    # first-touch each owner onto their own object so the subsequent attacker
+    # requests are genuine bola_cross_user violations, not first-touch grants
+    for obj, owner in ((account1, owner1), (account2, owner2), (account3, owner3)):
+        sim.send("GET", f"/api/accounts/{obj}", owner)
+
+    attacker1 = mint(f"hard_attacker1_{int(time.time())}")
+    attacker2_bad_sig = mint(f"hard_attacker2_{int(time.time())}", secret="wrong-secret-for-hardening-test")
+    attacker3 = mint(f"hard_attacker3_{int(time.time())}")
+
+    sim.send("GET", f"/api/accounts/{account1}", attacker1)          # bola_cross_user, distinct subject
+    time.sleep(1.0)
+    sim.send("GET", f"/api/accounts/{account2}", attacker2_bad_sig)  # jwt_bad_signature, collapses to this IP
+    time.sleep(1.0)
+    sim.send("GET", f"/api/accounts/{account3}", attacker3)          # bola_cross_user, distinct subject
+    time.sleep(1.0)
+
+    admin = {"X-Admin-Key": settings.admin_api_key}
+    hardened = False
+    for _ in range(6):
+        time.sleep(1.0)
+        try:
+            r = httpx.get(f"{sim.gateway}/admin/hardening", headers=admin, timeout=5)
+            resources = [h["resource"] for h in r.json().get("hardened_resources", [])]
+            if "account" in resources:
+                hardened = True
+                break
+        except Exception:
+            pass
+    sim.rows.append(("attack", "13. Autonomous hardening triggers after 3 distinct attackers on one resource",
+                     "hardened", "hardened" if hardened else "not hardened", "-", 0.0, hardened))
+
+    # The safety property that matters more than the trigger itself: a real,
+    # unrelated owner of a DIFFERENT object of the now-hardened resource must
+    # never be challenged or blocked by this alone - only observed. If this
+    # fails, the feature is a self-inflicted DoS vector, not a defense.
+    innocent = mint(f"hard_innocent_{int(time.time())}")
+    innocent_obj = f"96{int(time.time())}9"
+    sim.send("GET", f"/api/accounts/{innocent_obj}", innocent)  # first-touch, establishes ownership
+    r, decision, risk, _, err = sim.send("GET", f"/api/accounts/{innocent_obj}", innocent)  # real second read
+    safe = (not err) and decision in ("allow", "observe")
+    sim.rows.append(("attack", f"14. Innocent owner of hardened resource not collaterally punished (decision={decision})",
+                     "allow/observe", decision if not err else "UNREACHABLE", risk, 0.0, safe))
+
+
 # ------------------------------------------------------------------- scorecard
 
 def report(sim, gateway):
@@ -355,12 +427,18 @@ def run_once(gateway):
     # whether the behavioural layer worked. It did not - see backend/MEMORY.md.
     print("-- phase 3: behavioural drift (needs a baseline, takes ~25s) -----------")
     phase_behavioural(sim)
+    print("-- phase 4: autonomous api hardening (needs spacing, takes ~10s) ------")
+    phase_hardening(sim)
     # The critical test: after a full attack barrage from this same machine, do
     # real users still get served? A gateway that blocks them has traded a false
     # negative for a false positive, which is the failure mode this product
     # exists to avoid.
-    print("-- phase 4: legitimate traffic again, post-attack ----------------------")
-    phase_benign(sim, tag="-post")
+    print("-- phase 5: legitimate traffic again, post-attack ----------------------")
+    # account_also_ok=("observe",): phase 4 may have left the "account"
+    # resource hardened for up to resource_hardening_cooldown_sec (180s
+    # default) - real, correct, and time-bounded, not a bug. See
+    # phase_benign's docstring for why "observe" here isn't a false positive.
+    phase_benign(sim, tag="-post", account_also_ok=("observe",))
     return report(sim, gateway.rstrip("/"))
 
 
