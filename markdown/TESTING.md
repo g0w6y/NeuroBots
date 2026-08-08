@@ -4,7 +4,7 @@ Four things need proving, and there is a script for each:
 
 | What | Script | Passes when |
 |---|---|---|
-| Detection is correct | `backend/attack_sim/simulate.py` | 12/12 attacks caught, 0 false positives |
+| Detection is correct | `backend/attack_sim/simulate.py` | 18/18 attacks caught, 0 false positives, 6/6 chain steps |
 | Revocation and API3 work | `scripts/verify_flow.py` | all checks pass |
 | The dashboard shows real data | `frontend/contract-check.mjs` | 44/44 contract checks |
 | It stays fast under load | `scripts/benchmark.py` | p99 gateway overhead < 15ms |
@@ -47,16 +47,22 @@ backend/venv/bin/python backend/attack_sim/simulate.py
 python attack_sim/simulate.py --loop
 ```
 
-The suite runs four phases: legitimate traffic, then every attack class, then a
-behavioural-drift case that needs ~25s to build a baseline, then **legitimate
-traffic again**. That last phase is the one that matters. A gateway which blocks
-real users after an attack has traded a false negative for a false positive,
-which is not an improvement.
+The suite runs five phases: legitimate traffic, then every attack class plus
+the API8/API9 coverage cases, then a one-identity attack-chain scenario
+(recon, BOLA, BFLA, pivot, evade), then a behavioural-drift case that needs
+~25s to build a baseline, then autonomous hardening, then **legitimate
+traffic again**. That last phase is the one that matters. A gateway which
+blocks real users after an attack has traded a false negative for a false
+positive, which is not an improvement.
 
-Twelve attack classes are covered: BOLA cross-user, BFLA privilege escalation,
-missing token, `alg=none` forgery, wrong-key signature, expired token, untrusted
-issuer, wrong audience, malformed token, object enumeration, rate/burst abuse,
-and a low-and-slow scrape that stays under every hard limit.
+Eighteen attack classes are covered: BOLA cross-user, BFLA privilege
+escalation, missing token, `alg=none` forgery, wrong-key signature, expired
+token, untrusted issuer, wrong audience, malformed token, object enumeration,
+rate/burst abuse, SSRF, excessive data exposure, shadow endpoint access
+(API9), security misconfiguration audit (API8), a low-and-slow scrape that
+stays under every hard limit, and autonomous hardening plus its collateral-
+damage safety check. The attack-chain scenario reuses these same detectors in
+sequence rather than adding new ones.
 
 Every verdict is read off the gateway's own `X-ZT-Decision` response header. The
 simulator has no privileged view into the gateway and shares no state with it.
@@ -67,7 +73,7 @@ The suite reuses a small cast of identities, and several forgery cases share one
 subject. On a second back-to-back run that subject is still inside the
 autonomous cooldown it earned the first time, so it returns
 `auto_escalated_block` where the suite expects `challenge` — and the scorecard
-reads 11/12.
+reads fewer than 18/18.
 
 That is the product working correctly; a proven forger is supposed to stay
 blocked. But it makes the number look wrong. **Restart the gateway between
@@ -77,7 +83,7 @@ deliberately preserves ownership grants, so it is not a substitute.
 ## 2. Revocation and response inspection
 
 ```bash
-python scripts/verify_flow.py --gateway http://127.0.0.1:8000
+python scripts/verify_flow.py --gateway http://127.0.0.1:8080
 ```
 
 Covers the two flow steps the attack simulator structurally cannot reach:
@@ -171,9 +177,9 @@ front.
 
 | Symptom | Usual cause |
 |---|---|
-| 11/12 instead of 12/12 | gateway not restarted between scored runs — see above |
+| fewer than 18/18 | gateway not restarted between scored runs — see above |
 | Contract check: 0 entities, stale alerts | pointed at the wrong gateway; use `VITE_`-prefixed vars |
 | Contract check fails on empty charts | no traffic yet; run the attack sim first |
 | Benchmark reports contamination | `--requests` at/above 25, or a gateway with prior escalation state |
-| Throughput far below expectation | single uvicorn worker; see `docs/DEPLOYMENT.md` |
+| Throughput far below expectation | single uvicorn worker; see `DEPLOYMENT.md` |
 | `502` on allowed requests | upstream not running — correct gateway behaviour, nothing to fix |

@@ -66,13 +66,17 @@ Standards: OWASP API Top 10, MITRE ATT&CK
 
 ## Results
 
-Detection rate: 100% (all 8 attack classes detected)
+Detection rate: 100% (18 of 18 attack classes detected, plus a full
+attack-chain scenario), verified by `backend/attack_sim/simulate.py`
 
 False positive rate: 0% (no real users blocked)
 
-Latency: p99 under 15 milliseconds
+Gateway decision overhead: p99 under 15 milliseconds, measured, not estimated
+(see `markdown/PERFORMANCE.md`)
 
-Throughput: 8,000+ requests per second
+Throughput: single uvicorn worker measures a few hundred req/s end to end on
+a developer laptop; scales horizontally with `WORKERS=N` behind a load
+balancer, verified with 3 real worker processes (see `markdown/DEPLOYMENT.md`)
 
 ## Why Project0 Wins
 
