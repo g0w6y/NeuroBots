@@ -1,10 +1,10 @@
-# Project0
+# Project 0
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection
 Platform.
 
 **Naming note:** the GitHub repository is called `NeuroBots` (its original
-name); the product itself is `Project0`. Same codebase, no separate fork —
+name); the product itself is `Project 0`. Same codebase, no separate fork —
 every script, container and doc below refers to the product name.
 
 ## The problem, in one sentence
