@@ -92,7 +92,11 @@ export default function AccessControl({ entities, incidents }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {/* 5 tiles: 2 or 5 columns are the only counts that don't leave a
+          stranded tile on its own row. sm:grid-cols-3 looked like a fix but
+          actually widened the ragged range (3+2) across the whole 640-1023px
+          band that used to render all 5 in one clean row from 768px up. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="Ownership grants" value={grants.length} />
         <Stat label="Known identities" value={entities.length} />
         <Stat label="Flagged" value={flagged.length} tone={flagged.length ? 'caution' : 'default'} />
