@@ -67,6 +67,17 @@ time using both deterministic rules and real trained ML behavioral models.
 - Executive reporting, generated on demand from real audit data
 - Real-time decisions: p50 around 4ms measured under real load, inside the
   15ms budget
+- Intelligence Console: kill-chain reconstruction (correlates an identity's
+  alerts into MITRE ATT&CK phases), predictive threat forecasting (Shannon
+  entropy + exponential smoothing over the live alert stream), adaptive
+  per-entity trust scoring, and autonomous hardening recommendations,
+  all rule-based and statistical over real audit data, not a live model
+- A from-scratch Graph Attention Network + Graph Convolutional Network
+  (pure numpy, no PyTorch/DGL) scores structural anomalies on the access
+  graph. Genuinely trained: the GCN layer and edge classifier update via
+  real backpropagation and Adam, verified by watching loss decrease across
+  real training runs; the GAT attention layer computes real multi-head
+  attention over real edges
 
 **What makes it unique, and innovation over existing solutions:**
 - Most "AI security" demos fake the AI. Ours is real, trained, and proven
@@ -100,6 +111,10 @@ directly on GitHub.
 - Markov chain sequence modeling: flags unusual call-sequence transitions
 - NetworkX bipartite user-object access graph: fan-in / fan-out novelty
   scoring
+- A from-scratch Graph Attention Network + Graph Convolutional Network
+  (pure numpy): real self-supervised link-prediction training via
+  backpropagation and Adam, fused into the same ml_risk score as the three
+  models above
 - Deliberately not using a live LLM to decide any verdict. Narrative and
   executive-report generation are deterministic templates, so a security
   decision can never be hallucinated
@@ -107,9 +122,11 @@ directly on GitHub.
 **APIs:**
 - The gateway itself is fully API-first: every capability, including
   detection, admin, provisioning, and reporting, is an HTTP endpoint
-- 15+ admin endpoints, including `/admin/alerts`, `/admin/metrics`,
+- 22 admin endpoints, including `/admin/alerts`, `/admin/metrics`,
   `/admin/executive-report`, `/admin/hardening`, `/admin/ml-status`,
-  `/admin/config-audit`, and `/admin/incidents`
+  `/admin/config-audit`, `/admin/incidents`, and the Intelligence Console's
+  `/admin/kill-chains`, `/admin/threat-forecast`, `/admin/threat-intel`,
+  `/admin/trust-scores`, and `/admin/auto-harden`
 - A demo upstream API the gateway protects, standing in for a real
   customer API
 
@@ -135,7 +152,9 @@ Every claim below is committed and pushed, not local-only.
 - Real ML pipeline: trained models, live risk scores, verified as actually
   consumed by real gateway decisions
 - Frontend dashboard: live threat feed, risk gauge, MITRE matrix, entity
-  table, API inventory, access control view, and threat-hunting view, all
+  table, API inventory, access control view, threat-hunting view, an
+  Intelligence Console (kill chains, threat forecast, trust scores,
+  auto-harden recommendations), and a real-time attack heatmap, all
   reading real gateway data with no mock data
 - TLS in transit, high availability via self-healing Redis/Postgres
   reconnect, and horizontal scaling actually run with 3 worker processes
@@ -153,9 +172,11 @@ Every claim below is committed and pushed, not local-only.
 - `backend/benchmark.py`: real concurrent throughput measurement
 
 **Documentation, all real and all in the repo:** `ARCHITECTURE.md`,
-`DEPLOYMENT.md`, `PERFORMANCE.md`, `DEMO.md`, `backend/MEMORY.md`.
-Covers design decisions, deployment hardening, real performance numbers,
-and exact commands to run the whole system.
+`DEPLOYMENT.md`, `PERFORMANCE.md`, `TESTING.md`, `DEMO.md`, `backend/MEMORY.md`.
+Covers design decisions, deployment hardening, real performance numbers
+(including a real, disclosed latency gap under concurrent load with real
+Redis attached — reported honestly rather than left out), and exact
+commands to run the whole system.
 
 ## Slide 6: Live Demo
 
@@ -179,6 +200,8 @@ commands, verified from a clean slate before being written down.
   positives
 - The Threat Hunt page's "Recon then exploit" saved hunt, showing the
   chain scenario's identity reconstructed step by step from real alerts
+- The Intelligence Console: a real kill-chain reconstruction and threat
+  forecast generated from that same attack traffic, not canned
 
 Even the parts not shown live are independently provable via the commands
 in `DEMO.md`. Nothing here needs to be taken on faith.
@@ -193,22 +216,29 @@ in `DEMO.md`. Nothing here needs to be taken on faith.
   weaponized against real users. This required a genuine anti-gaming
   design, not just a feature that "works" in the demo
 - Coordinating parallel work from multiple team members on the same
-  codebase without losing anyone's real contributions
+  codebase without losing anyone's real contributions, and without merging
+  anything blind: every teammate's branch was reviewed line by line before
+  merging, and real issues were caught and fixed this way, including
+  detector names that didn't match the real code, a wrong port in a doc
+  example, and a fake "AI-generated" report that never called any model
 
 **Remaining work:**
-- Throughput and load testing beyond the current verified scale
+- A real, disclosed latency gap: gateway decision overhead stays inside
+  budget under real load with the in-memory fallback, but measures well
+  outside it under real concurrent load with real Redis attached (found,
+  reproduced three times, not yet root-caused - see `PERFORMANCE.md`)
 - Secrets-manager integration tested against real cloud infrastructure
   (the integration point is built and verified, the live integration isn't)
 - Live dashboard push across multiple gateway workers, which currently
   falls back to polling and still works correctly
 
 **Plan before the Final Round:**
+- Root-cause and fix the real-Redis concurrency latency gap above
 - Load-test at production-representative scale
 - Expand OAuth flow support if the next round's scope calls for it
-- Explore the remaining bonus directions, such as LLM-assisted threat
-  hunting with strict guardrails and graph neural networks, if time
-  allows. Both are currently and deliberately not built, to avoid
-  overclaiming
+- LLM-assisted threat hunting, with the same "never let it decide a
+  verdict" guardrail already applied everywhere else, if time allows -
+  still deliberately not built, to avoid overclaiming
 
 ## Slide 8: Impact
 
@@ -233,6 +263,7 @@ Verified as 0 false positives across the full test suite.
 
 **Future scope:** LLM-assisted threat hunting, using the same "never let
 it decide a verdict" safety principle already applied elsewhere in the
-system, graph neural networks for deeper relationship anomaly detection,
-and AI-directed penetration testing to continuously validate the gateway
-itself.
+system; extending the graph neural network already live in `ml/` with full
+backpropagation through its attention layer, not just its GCN and edge
+classifier; and AI-directed penetration testing to continuously validate
+the gateway itself.
