@@ -10,15 +10,8 @@ import RiskChart from './RiskChart.jsx';
 import MitreMatrix from './MitreMatrix.jsx';
 import EntityTable from './EntityTable.jsx';
 import IncidentFeed from './IncidentFeed.jsx';
+import { Icon, PanelHeader } from './PanelHeader.jsx';
 import { GATEWAY_URL } from '../api/gateway.js';
-
-function Icon({ name, className = '' }) {
-  return (
-    <span className={`material-symbols-outlined ${className}`} aria-hidden="true">
-      {name}
-    </span>
-  );
-}
 
 // Every section is now backed by real gateway data:
 //   Overview        /admin/{metrics,alerts,entities,incidents}
@@ -49,7 +42,7 @@ const VIEW_SUBTITLE = {
 
 function SideNav({ connectionState, transport, view, onNavigate, counts }) {
   return (
-    <nav className="fixed left-0 top-0 z-40 hidden h-full w-60 flex-col border-r border-white/10 bg-canvas-sunken py-6 md:flex">
+    <nav className="fixed left-0 top-0 z-40 hidden h-full w-64 flex-col border-r border-white/10 bg-canvas-sunken py-6 md:flex">
       <div className="mb-8 px-4">
         <h1 className="font-display text-xl font-bold uppercase tracking-widest text-accent">ProjectZero</h1>
         <p className="mt-1 font-mono text-[10px] text-ink-faint">NeuroBots Gateway · Terminal 01-A</p>
@@ -128,6 +121,12 @@ export default function Dashboard() {
   const { alerts, allAlerts, metrics, entities, incidents, connectionState, lastError, transport } = useLiveData();
   const [view, setView] = useState('overview');
 
+  // Both already computed once in deriveMetrics (normalize.js) - read them
+  // back rather than recomputing so the stat tile, the gauge and the pie
+  // below always agree on the same numbers.
+  const blockRate = metrics?.block_rate ?? 0;
+  const risk = metrics?.overall_risk ?? 0;
+
   // Sidebar badges. Only surfaced where the number is actionable - a blocked
   // count on Logs and a cooldown count on Access Control both mean "look here";
   // a route count on Inventory would just be decoration.
@@ -144,19 +143,19 @@ export default function Dashboard() {
     <div className="min-h-screen tactical-grid">
       <SideNav connectionState={connectionState} transport={transport} view={view} onNavigate={setView} counts={counts} />
 
-      <header className="fixed top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/10 bg-canvas/80 px-4 backdrop-blur-md md:pl-[256px] md:pr-8">
-        <div>
-          <h2 className="font-display text-lg font-semibold tracking-tight text-ink">
+      <header className="fixed top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/10 bg-canvas/80 px-4 backdrop-blur-md md:pl-64 md:pr-8">
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate font-display text-lg font-semibold tracking-tight text-ink">
             {NAV.find((n) => n.id === view)?.label || 'Threat Console'}
           </h2>
-          <p className="font-mono text-[10px] text-ink-faint">
+          <p className="truncate font-mono text-[10px] text-ink-faint">
             {VIEW_SUBTITLE[view]} ·{' '}
             {transport === 'websocket'
               ? 'streaming decisions over /ws/events'
               : `polling every ${(Number(import.meta.env.VITE_POLL_INTERVAL) || 2000) / 1000}s`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {/* The sidebar is hidden below md, so without this the only way to
               change section on a phone would be to widen the window. */}
           <select
@@ -175,7 +174,8 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="px-4 pb-10 pt-20 md:pl-[256px] md:pr-8">
+      <main className="px-4 pb-10 pt-20 md:pl-64 md:pr-8">
+        <div className="mx-auto w-full max-w-[1680px]">
         {(connectionState === 'error' || connectionState === 'degraded') && (
           <div
             className={`mb-4 rounded border px-3 py-2 font-mono text-xs ${
@@ -266,11 +266,19 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="lg:col-span-6 h-[560px]">
+          {/* clamp(): scales with viewport height (55vh) but never gets so
+              short it's useless on a laptop or so tall it towers over the
+              posture/investigation columns on an ultrawide monitor */}
+          <div className="lg:col-span-6 h-[clamp(420px,55vh,620px)]">
             <ThreatFeed alerts={alerts} />
           </div>
 
-          <div className="flex flex-col gap-3 lg:col-span-3">
+          {/* min-h-0 lets the flex-1 child below actually shrink/grow inside
+              the grid-stretched height instead of overflowing it - the row's
+              real height comes from ThreatFeed's clamp() next to it. */}
+          {/* IncidentFeed owns its own flex-1/min-h-0 sizing now (see
+              IncidentFeed.jsx) - no wrapper div needed here. */}
+          <div className="flex min-h-0 flex-col gap-3 lg:col-span-3">
             <MitreMatrix counts={metrics?.mitre_counts} />
             <IncidentFeed incidents={incidents} />
           </div>
@@ -283,20 +291,8 @@ export default function Dashboard() {
         <EntityTable entities={entities} />
         </>
         )}
+       </div>
       </main>
-    </div>
-  );
-}
-
-export function PanelHeader({ icon, children, tone = 'default', right }) {
-  const toneText = { default: 'text-ink-muted', accent: 'text-accent', danger: 'text-risk-danger' }[tone];
-  return (
-    <div className="flex items-center justify-between border-b border-white/5 bg-white/[0.02] px-4 py-2.5">
-      <span className={`label-caps flex items-center gap-2 ${toneText}`}>
-        {icon ? <Icon name={icon} className="text-[16px]" /> : null}
-        {children}
-      </span>
-      {right}
     </div>
   );
 }

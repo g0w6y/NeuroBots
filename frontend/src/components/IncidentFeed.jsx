@@ -12,7 +12,15 @@ function timeAgo(ts) {
 
 export default function IncidentFeed({ incidents }) {
   return (
-    <div className="glass-panel rounded-lg p-4">
+    // flex-1/min-h-0 only do anything once the parent column has a definite
+    // height to distribute, which is only true at lg+ (the tactical grid
+    // stretches the column to match Threat Feed's clamp() height). Below lg
+    // the Overview grid stacks to a single column and this panel's height is
+    // just its own content - so flex-1 alone would render every incident
+    // with no cap. max-h-64 lg:max-h-none on the list below carries the old
+    // fixed cap at every width below lg, and only lets go of it once the
+    // grid is actually giving this column real height to fill.
+    <div className="glass-panel flex min-h-0 flex-1 flex-col rounded-lg p-4">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-display text-sm font-semibold text-ink">Autonomous mitigation</h3>
         <span className="font-mono text-[10px] uppercase tracking-wide text-ink-faint">
@@ -26,7 +34,7 @@ export default function IncidentFeed({ incidents }) {
         </div>
       )}
 
-      <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+      <div className="flex max-h-64 flex-1 flex-col gap-2 overflow-y-auto lg:max-h-none">
         {incidents.slice(0, 20).map((i) => (
           <div
             key={i.id}
