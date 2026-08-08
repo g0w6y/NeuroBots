@@ -9,7 +9,7 @@ import os
 import asyncio
 import itertools
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from config import settings
 from auth import validate_jwt, jwt_error_signal
 from detect import Signal, check_bola, check_bfla, check_rate_limit, check_missing_token, check_enumeration, fuse_signals, risk_score, explain_decision, inspect_response, resource_hardening_signal
@@ -22,6 +22,14 @@ from security_checks import (
     shadow_endpoint_signal, audit_config, SECURITY_HEADERS,
 )
 from executive_report import generate_executive_report
+from llm_reporter import generate_llm_threat_summary, generate_executive_report_markdown
+from threat_forecast import generate_threat_forecast
+from auto_harden import generate_hardening_recommendations
+from kill_chain import reconstruct_kill_chains
+from threat_intel import generate_threat_intel
+from adaptive_trust import compute_trust_scores
+from red_team import get_attack_payload
+from openapi_importer import parse_openapi_spec
 
 
 def utc_iso(dt: datetime = None) -> str:
@@ -1352,6 +1360,117 @@ async def executive_report():
     alerts = await audit_log.recent_alerts(limit=2000)
     incidents = await audit_log.recent_incidents(limit=500)
     return generate_executive_report(alerts, incidents)
+
+
+@app.get("/admin/llm/threat-summary", dependencies=[Depends(require_admin)])
+async def llm_threat_summary():
+    """LangChain Threat Intelligence narrative summary."""
+    alerts = await audit_log.recent_alerts(limit=100)
+    incidents = await audit_log.recent_incidents(limit=50)
+    return generate_llm_threat_summary(alerts, incidents)
+
+
+@app.get("/admin/llm/executive-report", dependencies=[Depends(require_admin)])
+async def llm_executive_report(download: bool = False):
+    """Downloadable Executive Markdown report generated via LangChain telemetry."""
+    alerts = await audit_log.recent_alerts(limit=2000)
+    incidents = await audit_log.recent_incidents(limit=500)
+    report_md = generate_executive_report_markdown(alerts, incidents)
+    if download:
+        return Response(
+            content=report_md,
+            media_type="text/markdown",
+            headers={"Content-Disposition": 'attachment; filename="NeuroBots_Executive_Threat_Report.md"'}
+        )
+    return {
+        "engine": "LangChain v1.3.14 + Markdown Reporter",
+        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
+        "report_markdown": report_md
+    }
+
+
+@app.get("/admin/threat-forecast", dependencies=[Depends(require_admin)])
+async def threat_forecast():
+    """Predictive threat forecasting — time-series entropy analysis."""
+    alerts = await audit_log.recent_alerts(limit=500)
+    incidents = await audit_log.recent_incidents(limit=200)
+    return generate_threat_forecast(alerts, incidents)
+
+
+@app.get("/admin/auto-harden", dependencies=[Depends(require_admin)])
+async def auto_harden():
+    """Autonomous API hardening recommendations."""
+    alerts = await audit_log.recent_alerts(limit=500)
+    incidents = await audit_log.recent_incidents(limit=200)
+    return generate_hardening_recommendations(alerts, incidents)
+
+
+@app.get("/admin/kill-chains", dependencies=[Depends(require_admin)])
+async def kill_chains():
+    """Attack kill chain reconstruction."""
+    alerts = await audit_log.recent_alerts(limit=500)
+    incidents = await audit_log.recent_incidents(limit=200)
+    return reconstruct_kill_chains(alerts, incidents)
+
+
+@app.get("/admin/threat-intel", dependencies=[Depends(require_admin)])
+async def threat_intel():
+    """Threat intelligence correlation feed."""
+    alerts = await audit_log.recent_alerts(limit=500)
+    incidents = await audit_log.recent_incidents(limit=200)
+    return generate_threat_intel(alerts, incidents)
+
+
+@app.get("/admin/trust-scores", dependencies=[Depends(require_admin)])
+async def trust_scores():
+    """Adaptive zero-trust scoring."""
+    alerts = await audit_log.recent_alerts(limit=500)
+    incidents = await audit_log.recent_incidents(limit=200)
+    return compute_trust_scores(alerts, incidents)
+
+
+@app.post("/admin/simulate-attack", dependencies=[Depends(require_admin)])
+async def simulate_attack(payload: dict):
+    """Interactive Red Team Sandbox simulation endpoint."""
+    attack_type = str(payload.get("attack_type", "bola")).lower()
+    attack_info = get_attack_payload(attack_type)
+
+    # Build simulated request headers
+    headers = {"host": "127.0.0.1:8080"}
+    if attack_info["token"]:
+        headers["authorization"] = f"Bearer {attack_info['token']}"
+
+    # Route request internally through gateway check logic
+    dummy_scope = {
+        "type": "http",
+        "method": attack_info["method"],
+        "path": attack_info["path"],
+        "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 54321),
+    }
+
+    dummy_request = Request(dummy_scope)
+    action, status_code, alert, resp, redacted_body = await check_and_forward(dummy_request)
+
+    return {
+        "simulation": attack_info,
+        "result": {
+            "action": action,
+            "status_code": status_code,
+            "risk_score": alert.get("risk", 0),
+            "signals": alert.get("signals", []),
+            "timestamp": alert.get("timestamp", utc_iso()),
+        }
+    }
+
+
+@app.post("/admin/openapi/import", dependencies=[Depends(require_admin)])
+async def import_openapi_spec(spec: dict):
+    """OpenAPI (Swagger) Spec Auto-Discovery & Policy Import endpoint."""
+    if not isinstance(spec, dict) or "paths" not in spec:
+        raise HTTPException(status_code=400, detail="Invalid OpenAPI spec: 'paths' dictionary required")
+    result = parse_openapi_spec(spec)
+    return result
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])

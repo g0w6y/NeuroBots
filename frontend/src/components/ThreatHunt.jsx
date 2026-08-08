@@ -1,18 +1,7 @@
 import { useMemo, useState } from 'react';
 import { HUNTS, runHunts } from '../api/analysis.js';
-
-// Threat Hunt: saved queries plus per-subject attack-chain reconstruction.
-//
-// PRODUCT.md proposes LangChain-generated hunting summaries. There is no LLM
-// wired into this build - no key, no client, no endpoint - so rather than
-// render prose that reads like analysis but is actually a template, this page
-// does deterministic correlation over the real alert window and shows its
-// working. Every count below is derived from gateway decisions you can click
-// through to in the log; nothing is generated.
-//
-// A hunt is: a predicate over alerts, grouped by subject, with the evidence
-// kept attached. That is genuinely most of what a hunting console does, and it
-// has the advantage of being reproducible.
+import { getLlmThreatSummary, getLlmExecutiveReportDownloadUrl, simulateAttack } from '../api/gateway.js';
+import { useResource } from '../hooks/useResource.js';
 
 function riskColor(score) {
   if (score > 60) return 'text-risk-danger';
@@ -23,30 +12,132 @@ function riskColor(score) {
 export default function ThreatHunt({ alerts, entities }) {
   const [activeHunt, setActiveHunt] = useState('bola');
   const [selectedSubject, setSelectedSubject] = useState(null);
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState(null);
+  const llmSummaryResource = useResource(getLlmThreatSummary);
 
   const results = useMemo(() => runHunts(alerts), [alerts]);
 
   const hunt = HUNTS.find((h) => h.id === activeHunt);
   const rows = results[activeHunt] || [];
 
-  // Timeline for the selected subject: everything it did, not just the hits for
-  // the current hunt. Pivoting to full context is the whole point of selecting.
   const timeline = useMemo(() => {
     if (!selectedSubject) return [];
     return alerts.filter((a) => a.subject === selectedSubject).sort((a, b) => a.ts - b.ts);
   }, [alerts, selectedSubject]);
 
   const selectedEntity = entities.find((e) => e.subject === selectedSubject);
+  const downloadUrl = getLlmExecutiveReportDownloadUrl();
 
   return (
     <div className="space-y-4">
       <div className="glass-panel rounded-lg px-4 py-3">
-        <p className="font-mono text-[11px] leading-relaxed text-ink-faint">
-          <span className="text-ink-muted">Deterministic correlation over the live alert window.</span>{' '}
-          Every figure below is computed from real gateway decisions — no model, no generated prose.
-          The LangChain summarisation layer described in PRODUCT.md is not built; this page does the
-          correlation part of that job in a way you can verify against the audit log.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-canvas-line pb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-accent text-[18px]">psychology</span>
+            <h3 className="font-display text-sm font-bold uppercase tracking-wider text-accent">LangChain Threat Intelligence Narrative</h3>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[10px] text-ink-faint">
+              {llmSummaryResource.data?.engine || 'LangChain v1.3.14 + PromptTemplate'}
+            </span>
+            <a
+              href={downloadUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 rounded bg-accent/15 px-2.5 py-1 font-mono text-[10px] uppercase tracking-caps text-accent transition-colors hover:bg-accent/25"
+            >
+              <span className="material-symbols-outlined text-[14px]">download</span>
+              Download Executive Report (.md)
+            </a>
+          </div>
+        </div>
+
+        <div className="mt-2.5 space-y-1">
+          {llmSummaryResource.data?.summary_bullets ? (
+            llmSummaryResource.data.summary_bullets.map((b, idx) => (
+              <p key={idx} className="font-mono text-[11px] leading-relaxed text-ink-muted">
+                • {b}
+              </p>
+            ))
+          ) : (
+            <p className="font-mono text-[11px] leading-relaxed text-ink-faint">
+              Analyzing live threat window telemetry with LangChain prompt template...
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Interactive Red Team Sandbox Panel */}
+      <div className="glass-panel rounded-lg px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-canvas-line pb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-risk-danger text-[18px]">terminal</span>
+            <h3 className="font-display text-sm font-bold uppercase tracking-wider text-risk-danger">
+              Red Team Attack Simulation Sandbox
+            </h3>
+            <span className="rounded bg-risk-danger-dim/50 px-2 py-0.5 font-mono text-[9px] text-risk-danger">
+              Live Inline Attack Generator
+            </span>
+          </div>
+          <span className="font-mono text-[10px] text-ink-faint">
+            Trigger live attacks to verify real-time blocking & graph detection
+          </span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {[
+            { id: 'bola', label: 'BOLA Attack (API1)' },
+            { id: 'bfla', label: 'BFLA Admin Escalation (API5)' },
+            { id: 'alg_none', label: 'JWT alg=none Bypass (API2)' },
+            { id: 'missing_token', label: 'Missing Auth Header' },
+            { id: 'enumeration', label: 'BOLA Object ID Probe' }
+          ].map((type) => (
+            <button
+              key={type.id}
+              disabled={simulating}
+              onClick={async () => {
+                setSimulating(true);
+                setSimResult(null);
+                try {
+                  const res = await simulateAttack(type.id);
+                  setSimResult(res);
+                } catch (e) {
+                  setSimResult({ error: e.message });
+                } finally {
+                  setSimulating(false);
+                }
+              }}
+              className="rounded border border-risk-danger/30 bg-risk-danger-dim/20 px-3 py-1 font-mono text-[11px] font-semibold text-risk-danger transition-colors hover:bg-risk-danger/30 disabled:opacity-50"
+            >
+              ⚡ Run {type.label}
+            </button>
+          ))}
+        </div>
+
+        {simResult && (
+          <div className="mt-3 rounded border border-white/10 bg-canvas-sunken p-3 font-mono text-xs text-ink">
+            <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-2">
+              <span className="font-bold text-accent">Simulation Outcome: {simResult.simulation?.name}</span>
+              <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                simResult.result?.action === 'block' ? 'bg-risk-danger/20 text-risk-danger' : 'bg-emerald-500/20 text-emerald-400'
+              }`}>
+                ACTION: {simResult.result?.action?.toUpperCase() || 'UNKNOWN'}
+              </span>
+            </div>
+            <p className="text-[11px] text-ink-muted">{simResult.simulation?.description}</p>
+            {simResult.result?.signals && (
+              <div className="mt-2 space-y-1">
+                <span className="text-[10px] uppercase text-ink-faint">Fired Signals:</span>
+                {simResult.result.signals.map((s, idx) => (
+                  <div key={idx} className="rounded bg-canvas-raised px-2 py-1 text-[11px] text-risk-danger">
+                    [{s.detector}] {s.owasp} — {s.evidence}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">

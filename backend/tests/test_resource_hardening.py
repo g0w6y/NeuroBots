@@ -37,7 +37,7 @@ def store():
 
 
 class TestRecordResourceAttack:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_distinct_attackers_counted_once_each(self, store):
         now = time.time()
         await store.record_resource_attack("account", "bob", now, 300)
@@ -45,7 +45,7 @@ class TestRecordResourceAttack:
         count = await store.record_resource_attack("account", "ip:1.2.3.4", now, 300)
         assert count == 3
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_repeated_same_attacker_does_not_inflate_count(self, store):
         """The anti-gaming property: one attacker hitting the resource 20
         times must never look like 20 distinct attackers. Identity/IP
@@ -55,7 +55,7 @@ class TestRecordResourceAttack:
             count = await store.record_resource_attack("account", "same_attacker", now, 300)
         assert count == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_old_entries_fall_out_of_window(self, store):
         old = time.time() - 1000
         recent = time.time()
@@ -65,7 +65,7 @@ class TestRecordResourceAttack:
         # only new_attacker should still count
         assert count == 1
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_different_resources_tracked_independently(self, store):
         now = time.time()
         await store.record_resource_attack("account", "attacker1", now, 300)
@@ -77,13 +77,13 @@ class TestRecordResourceAttack:
 
 
 class TestResourceHardenedState:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_starts_unhardened(self, store):
         now = time.time()
         until = await store.get_resource_hardened_until("account", now)
         assert until == 0.0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_and_read_back(self, store):
         now = time.time()
         hardened_until = now + 180
@@ -91,14 +91,14 @@ class TestResourceHardenedState:
         until = await store.get_resource_hardened_until("account", now)
         assert until == hardened_until
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_expires_and_self_clears(self, store):
         now = time.time()
         await store.set_resource_hardened("account", now - 1, 1)  # already expired
         until = await store.get_resource_hardened_until("account", now)
         assert until == 0.0
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_list_only_returns_active(self, store):
         now = time.time()
         await store.set_resource_hardened("account", now + 100, 100)

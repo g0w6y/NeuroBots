@@ -88,6 +88,56 @@ export async function getExecutiveReport() {
   return response.data;
 }
 
+export async function getLlmThreatSummary() {
+  const response = await client.get('/admin/llm/threat-summary');
+  return response.data;
+}
+
+export async function getLlmExecutiveReport() {
+  const response = await client.get('/admin/llm/executive-report');
+  return response.data;
+}
+
+export function getLlmExecutiveReportDownloadUrl() {
+  return `${GATEWAY_URL}/admin/llm/executive-report?download=true&key=${encodeURIComponent(ADMIN_KEY)}`;
+}
+
+// Innovation intelligence endpoints — predictive, forensic, and adaptive
+export async function getThreatForecast() {
+  const response = await client.get('/admin/threat-forecast');
+  return response.data;
+}
+
+export async function getAutoHarden() {
+  const response = await client.get('/admin/auto-harden');
+  return response.data;
+}
+
+export async function getKillChains() {
+  const response = await client.get('/admin/kill-chains');
+  return response.data;
+}
+
+export async function getThreatIntel() {
+  const response = await client.get('/admin/threat-intel');
+  return response.data;
+}
+
+export async function getAdaptiveTrust() {
+  const response = await client.get('/admin/trust-scores');
+  return response.data;
+}
+
+export async function simulateAttack(attackType = 'bola') {
+  const response = await client.post('/admin/simulate-attack', { attack_type: attackType });
+  return response.data;
+}
+
+export async function importOpenApiSpec(spec) {
+  const response = await client.post('/admin/openapi/import', spec);
+  return response.data;
+}
+
 // Live decision stream (gateway: EventHub + @app.websocket("/ws/events")).
 //
 // The key goes in the query string rather than a header because a browser
