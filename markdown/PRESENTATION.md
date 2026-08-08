@@ -143,9 +143,10 @@ Every claim below is committed and pushed, not local-only.
 - Executive reporting generated on demand from real audit data
 
 **Automated proof, checked into the repo and runnable by a judge directly:**
-- `attack_sim/simulate.py`: a real attack simulator. 16 of 16 attack
+- `attack_sim/simulate.py`: a real attack simulator. 18 of 18 attack
   classes detected, 18 of 18 legitimate requests correctly allowed, 0
-  false positives
+  false positives, plus a real attack-chain scenario (one identity: recon,
+  BOLA, BFLA, pivot, evade) reconstructed live on the Threat Hunt dashboard
 - `backend/tests/` and `ml/tests/`: 46 unit tests, all passing
 - `frontend/contract-check.mjs`: 44 of 44 checks, verifying the dashboard
   renders real gateway data correctly, field by field
@@ -174,8 +175,10 @@ commands, verified from a clean slate before being written down.
 - The dashboard's live threat feed populating in real time
 - `GET /admin/executive-report`, a real generated summary
 - `GET /admin/hardening`, proof the autonomous hardening feature is live
-- The attack simulator's own scorecard: 16 of 16 detected, 0 false
+- The attack simulator's own scorecard: 18 of 18 detected, 0 false
   positives
+- The Threat Hunt page's "Recon then exploit" saved hunt, showing the
+  chain scenario's identity reconstructed step by step from real alerts
 
 Even the parts not shown live are independently provable via the commands
 in `DEMO.md`. Nothing here needs to be taken on faith.

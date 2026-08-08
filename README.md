@@ -199,8 +199,10 @@ second back-to-back run that subject is still inside the autonomous cooldown
 it earned the first time, and returns `auto_escalated_block` where the suite
 expects `challenge`. That is the product working correctly, a proven forger
 is supposed to stay blocked, but it makes the scorecard read fewer than the
-full count. A clean run reports 16/16 attack classes detected, 18/18
-legitimate requests correctly allowed, 0 false positives. Restart `main.py`
+full count. A clean run reports 18/18 attack classes detected, 18/18
+legitimate requests correctly allowed, 0 false positives, plus a 6-step
+attack-chain scenario (recon, exploit, escalate, pivot, evade, one identity)
+all correct. Restart `main.py`
 between scored runs for a clean number. `POST /admin/reset` clears alerts and
 escalation state but deliberately preserves ownership grants, so it is not a
 substitute for a restart.
