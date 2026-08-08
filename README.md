@@ -2,6 +2,45 @@
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection Platform
 
+## How a request actually flows
+
+```mermaid
+flowchart TD
+    Client(["Client"]) --> S1
+
+    subgraph Gateway["GATEWAY - under 1ms"]
+        direction TB
+        S1["1. Validate JWT + revocation"]
+        S2["2. Rate limit (early)"]
+        S3["3. Extract features"]
+        S4["4. Authorize: BOLA / BFLA"]
+        S5["5. Risk score (cached ML)"]
+        S6["6. Policy decision"]
+        S7["7. Enforce"]
+        S8["8. Inspect response (API3)"]
+        S9["9. Emit event (async)"]
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9
+    end
+
+    S6 -.-> Allow["API: allow"]
+    S6 -.-> StepUp["Step-up: 401"]
+    S6 -.-> Block["Block: 403"]
+
+    S9 --> Agents["Intelligence Agents<br/>profile / sequence / graph / LLM"]
+    Agents <-.-> Redis[("Redis<br/>shared fast memory")]
+    Redis -.-> S4
+    Redis -.-> S5
+
+    style Gateway fill:transparent,stroke-dasharray: 3 3
+```
+
+The interactive, animated version of this same flow (step-by-step, a legit
+request vs. a BOLA attack side by side) is the reference architecture
+artifact this build was checked against throughout. Static version above
+kept in sync with `check_and_forward()` in `backend/main.py`; a second,
+more detailed static copy with the escalation and horizontal-scaling
+diagrams lives in `markdown/ARCHITECTURE.md`.
+
 ## Repository layout
 
 ```
