@@ -1,4 +1,4 @@
-# NeuroBots
+# Project0
 
 Zero Trust API Security Intelligence and Autonomous Authorization Protection Platform
 

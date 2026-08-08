@@ -1,4 +1,4 @@
-# NeuroBots gateway (FastAPI reverse proxy + detection engine).
+# Project0 gateway (FastAPI reverse proxy + detection engine).
 #
 # Build context is the REPO ROOT, not backend/ - see docker-compose.yml. That
 # keeps one .dockerignore in charge of every image and lets this file reference
@@ -23,9 +23,9 @@ COPY backend/ .
 
 # Non-root, per DEVOPS.md. A gateway whose whole job is enforcing authorization
 # should not be the one process on the host running as uid 0.
-RUN useradd --create-home --uid 10001 neurobots \
-    && chown -R neurobots:neurobots /app
-USER neurobots
+RUN useradd --create-home --uid 10001 project0 \
+    && chown -R project0:project0 /app
+USER project0
 
 # 8080 only. The gateway serves its admin API and its WebSocket stream on the
 # same port; there is no second listener to expose.

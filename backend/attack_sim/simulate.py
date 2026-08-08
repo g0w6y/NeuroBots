@@ -1,5 +1,5 @@
 """
-NeuroBots attack simulation suite.
+Project0 attack simulation suite.
 
 Drives real HTTP traffic at a running gateway and scores it against the success
 criteria in BACKEND.md: 8/8 attack classes detected, 0 false positives on

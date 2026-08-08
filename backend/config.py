@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     audience: str = "zt-api"
 
     redis_url: str = "redis://127.0.0.1:6379"
-    database_url: str = "postgresql://user:password@localhost/neurobots"
+    database_url: str = "postgresql://user:password@localhost/project0"
 
     admin_api_key: str = "changeme-admin-key"
 

@@ -1,4 +1,4 @@
-# NeuroBots dashboard. Multi-stage: Node builds the bundle, nginx serves it.
+# Project0 dashboard. Multi-stage: Node builds the bundle, nginx serves it.
 # The runtime image carries no Node, no npm and no source - just static files
 # behind a web server, which is a far smaller attack surface for the one
 # container in this stack that is meant to be reachable from a browser.

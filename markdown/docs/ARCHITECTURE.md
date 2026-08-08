@@ -1,8 +1,8 @@
-# NeuroBots Architecture
+# Project0 Architecture
 
 ## The shape of it
 
-NeuroBots is a reverse proxy that sits in front of an API and decides, per
+Project0 is a reverse proxy that sits in front of an API and decides, per
 request, whether the caller is allowed to do what they are asking. Everything
 else in the repo exists to support, observe or prove that one decision.
 

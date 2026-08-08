@@ -1,4 +1,4 @@
-# NeuroBots Architecture
+# Project0 Architecture
 
 Diagram-based companion to `backend/MEMORY.md` (the full reasoning behind
 every design decision, in prose) and `ml/README.md`. This file is the

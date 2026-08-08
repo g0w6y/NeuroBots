@@ -15,7 +15,7 @@ body {
 }
 
 @layer components {
-  /* The ProjectZero panel treatment: a translucent slab over the tactical grid,
+  /* The Project0 panel treatment: a translucent slab over the tactical grid,
      so the grid reads through the chrome and the page keeps depth without
      resorting to drop shadows. */
   .glass-panel {

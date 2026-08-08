@@ -1,4 +1,4 @@
-# NeuroBots ML worker (per-entity IsolationForest, Markov sequence model,
+# Project0 ML worker (per-entity IsolationForest, Markov sequence model,
 # NetworkX access graph). Standalone process - it publishes a soft anomaly
 # signal into Redis and is never on the request path.
 #

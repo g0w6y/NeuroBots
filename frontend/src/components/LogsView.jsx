@@ -177,7 +177,7 @@ export default function LogsView({ alerts }) {
         </label>
 
         <button
-          onClick={() => download(`neurobots-log-${Date.now()}.csv`, toCsv(filtered))}
+          onClick={() => download(`project0-log-${Date.now()}.csv`, toCsv(filtered))}
           disabled={filtered.length === 0}
           className="rounded border border-canvas-line px-2.5 py-1 font-mono text-[10px] uppercase tracking-caps text-ink-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
         >

@@ -47,8 +47,8 @@ function SideNav({ connectionState, transport, view, onNavigate, counts }) {
   return (
     <nav className="fixed left-0 top-0 z-40 hidden h-full w-64 flex-col border-r border-white/10 bg-canvas-sunken py-6 md:flex">
       <div className="mb-8 px-4">
-        <h1 className="font-display text-xl font-bold uppercase tracking-widest text-accent">ProjectZero</h1>
-        <p className="mt-1 font-mono text-[10px] text-ink-faint">NeuroBots Gateway · Terminal 01-A</p>
+        <h1 className="font-display text-xl font-bold uppercase tracking-widest text-accent">Project0</h1>
+        <p className="mt-1 font-mono text-[10px] text-ink-faint">Project0 Gateway · Terminal 01-A</p>
       </div>
 
       <div className="flex flex-1 flex-col gap-1 px-2">

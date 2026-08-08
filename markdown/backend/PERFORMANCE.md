@@ -1,4 +1,4 @@
-# NeuroBots Performance Benchmark Report
+# Project0 Performance Benchmark Report
 
 Real numbers, measured 2026-08-08 against the actual running gateway on a
 single developer laptop — not estimated, not carried over from an earlier

@@ -1,5 +1,5 @@
 """
-NeuroBots real throughput + concurrency benchmark.
+Project0 real throughput + concurrency benchmark.
 
 attack_sim/simulate.py already measures the gateway's own per-request decision
 overhead (p50/p99, read from the audit log) - that number has been real since

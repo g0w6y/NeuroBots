@@ -1,6 +1,6 @@
-# NeuroBots Threat Console
+# Project0 Threat Console
 
-Live dashboard for the NeuroBots Zero-Trust API Security Gateway. Reads real gateway
+Live dashboard for the Project0 Zero-Trust API Security Gateway. Reads real gateway
 state over HTTP — no simulated or mock data anywhere in this app.
 
 ## Run it
