@@ -15,17 +15,68 @@ Regenerate either at any time: `python3 attack_sim/simulate.py` or
 
 ## Headline numbers
 
-| Metric | Value | Source |
-|---|---|---|
-| Gateway decision overhead, single request | p50 0.05–0.08ms, p99 0.3–0.6ms | `attack_sim/simulate.py` |
-| Gateway decision overhead, under 50-concurrent load | p50 0.05ms, p99 0.42ms, max 0.86ms | `benchmark.py` + audit log |
-| End-to-end round trip (client → gateway → upstream → client), 50 concurrent identities | p50 15.6ms, p99 190ms, max 212ms | `benchmark.py` |
-| Throughput, 50 concurrent identities, 0 errors | 101.4 req/s | `benchmark.py` |
+**Important, found late and worth stating up front: every number below,
+including the ones already published elsewhere (README, PRESENTATION.md),
+was measured with Redis and PostgreSQL both disconnected (in-memory
+fallback) — not disclosed in this table until now.** With both actually
+connected, the picture is materially different; see "With real Redis
+attached" below, added 2026-08-08 after re-running this exact benchmark
+against a genuinely fresh clone with real docker-compose Redis/Postgres.
+
+| Metric | Value | Source | Backing stores |
+|---|---|---|---|
+| Gateway decision overhead, single request | p50 0.05–0.08ms, p99 0.3–0.6ms | `attack_sim/simulate.py` | in-memory fallback |
+| Gateway decision overhead, under 50-concurrent load | p50 0.05ms, p99 0.42ms, max 0.86ms | `benchmark.py` + audit log | in-memory fallback |
+| End-to-end round trip (client → gateway → upstream → client), 50 concurrent identities | p50 15.6ms, p99 190ms, max 212ms | `benchmark.py` | in-memory fallback |
+| Throughput, 50 concurrent identities, 0 errors | 101.4 req/s | `benchmark.py` | in-memory fallback |
 
 The `<15ms` target in the problem statement is the **gateway's own decision
 overhead** — that's the thing this product actually adds to a request. On
-that number, this isn't close, it's roughly **25–300× inside the target**,
-and it stays there under concurrent load, not just in isolation.
+the in-memory-fallback numbers above, this isn't close, it's roughly
+**25–300× inside the target**. That claim does NOT currently hold with real
+Redis attached under real concurrent load — see below.
+
+## With real Redis attached (found 2026-08-08, unresolved)
+
+Re-ran the identical `benchmark.py` command, same target route
+(`POST /api/transfers`, no BOLA lookup - same route the in-memory numbers
+above used), against a genuinely fresh clone with real docker-compose Redis
+and PostgreSQL, both confirmed `connected` via `/health` before each run:
+
+| Concurrency | Gateway decision overhead (p50 / p95 / p99 / max) | Backing stores |
+|---|---|---|
+| 1 | 3.1ms / 5.0ms / 9.4ms / 11.9ms | real Redis + real Postgres |
+| 50 | 65.8ms / 83.5ms / 95.4ms / 98.1ms | real Redis + real Postgres |
+
+Reproduced three times, consistent each time, ruling out one-off noise.
+Also ruled out, specifically:
+
+- **Postgres connection state** - disconnecting it entirely (true in-memory
+  audit-log fallback, Redis still real) made no measurable difference
+  (p99 stayed ~88ms), so Postgres write latency is not the cause -
+  consistent with `emit_alert()`'s write being fire-and-forget.
+- **Accumulated entity count** - a gateway with 100 `control_plane_baselines`
+  from prior traffic measured the SAME low p99 (~9ms) as a 0-baseline one at
+  concurrency 1, so the `agents.py` control-plane tick (which does iterate
+  every known entity once a second) was a reasonable first suspect and isn't
+  confirmed as the cause.
+- **Redis itself being slow under this concurrency** - benchmarked 5
+  sequential Redis round trips per simulated request (roughly what one real
+  request's rate-limit + ownership + hardening + ml_risk checks cost) at the
+  same concurrency=50, directly against Redis, bypassing the gateway
+  entirely: p99 14.6ms. Real, but nowhere near enough to explain a 95ms
+  gateway p99 on its own.
+
+What's confirmed: this is real (reproduces cleanly), it's specific to real
+concurrent load against real Redis (concurrency=1 is fine even with both
+real), and it is not fully root-caused yet - the Redis round-trip cost
+measured in isolation only accounts for a fraction of the gap. Whatever
+else is contributing (event-loop scheduling under real concurrency,
+something CPU-bound in the request path, or a combination) hasn't been
+isolated with the same rigor as the httpx pool-size fix below. Don't
+repeat the in-memory-fallback numbers above as if they describe the
+Redis-connected, more production-realistic deployment - they don't, and
+this file said otherwise until this pass caught it.
 
 ## Why there are two different latency numbers, not one
 
