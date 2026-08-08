@@ -657,6 +657,8 @@ class SharedStore:
         self._block_state.clear()
         self._escalation_counts.clear()
         self._last_touch.clear()
+        self._resource_attackers.clear()
+        self._hardened_resources.clear()
         return counts
 
     async def reset_redis_runtime_state(self) -> int:
@@ -664,7 +666,7 @@ class SharedStore:
             return 0
         removed = 0
         try:
-            for pattern in ("reqtimes:*", "objhits:*", "blockevents:*", "blocked:*", "escalations:*"):
+            for pattern in ("reqtimes:*", "objhits:*", "blockevents:*", "blocked:*", "escalations:*", "hardened:*", "resattackers:*"):
                 async for key in self.redis_client.scan_iter(match=pattern, count=500):
                     await self.redis_client.delete(key)
                     removed += 1
