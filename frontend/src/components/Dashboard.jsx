@@ -4,6 +4,7 @@ import LogsView from './LogsView.jsx';
 import ApiInventory from './ApiInventory.jsx';
 import AccessControl from './AccessControl.jsx';
 import ThreatHunt from './ThreatHunt.jsx';
+import ExecutiveReport from './ExecutiveReport.jsx';
 import RiskGauge from './RiskGauge.jsx';
 import ThreatFeed from './ThreatFeed.jsx';
 import RiskChart from './RiskChart.jsx';
@@ -29,6 +30,7 @@ const NAV = [
   { id: 'hunt', icon: 'radar', label: 'Threat Hunt' },
   { id: 'inventory', icon: 'api', label: 'API Inventory' },
   { id: 'access', icon: 'lock_person', label: 'Access Control' },
+  { id: 'report', icon: 'summarize', label: 'Executive Report' },
   { id: 'logs', icon: 'terminal', label: 'Logs' }
 ];
 
@@ -37,6 +39,7 @@ const VIEW_SUBTITLE = {
   hunt: 'Correlation over the live alert window',
   inventory: 'Enforced routes vs. observed traffic',
   access: 'Ownership grants, roles and cooldowns',
+  report: 'Deterministic summary over real audit data',
   logs: 'Full audit log'
 };
 
@@ -195,6 +198,7 @@ export default function Dashboard() {
         {view === 'hunt' && <ThreatHunt alerts={allAlerts} entities={entities} />}
         {view === 'inventory' && <ApiInventory alerts={allAlerts} />}
         {view === 'access' && <AccessControl entities={entities} incidents={incidents} />}
+        {view === 'report' && <ExecutiveReport />}
         {view === 'logs' && (
           <div className="h-[calc(100vh-140px)]">
             <LogsView alerts={allAlerts} />

@@ -73,6 +73,14 @@ export async function getMlStatus() {
   return response.data;
 }
 
+// Deterministic summary over already-decided facts, not a live LLM call -
+// see backend/executive_report.py. Fixed at generation time, so this is a
+// one-shot fetch like getRoutes/getOwnership, not part of the 2s poll loop.
+export async function getExecutiveReport() {
+  const response = await client.get('/admin/executive-report');
+  return response.data;
+}
+
 // Live decision stream (gateway: EventHub + @app.websocket("/ws/events")).
 //
 // The key goes in the query string rather than a header because a browser
