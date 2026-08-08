@@ -183,3 +183,4 @@ front.
 | Benchmark reports contamination | `--requests` at/above 25, or a gateway with prior escalation state |
 | Throughput far below expectation | single uvicorn worker; see `DEPLOYMENT.md` |
 | `502` on allowed requests | upstream not running — correct gateway behaviour, nothing to fix |
+| p99 reads over budget with real Postgres attached | `/admin/reset` and even a full process restart both correctly leave Postgres rows alone (an audit log that can be erased isn't one) — the scorecard's latency line reads alert *history*, so it silently mixes in every prior run's samples. `TRUNCATE alerts, incidents;` (or point at a fresh database) before the next scored run |

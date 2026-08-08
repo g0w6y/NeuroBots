@@ -29,6 +29,27 @@ against a gateway with real auto-mitigation enabled unless you've confirmed
 the interval is long enough, and the threshold high enough, to outlast its own
 traffic - as shipped, it isn't.
 
+CAUTION about the "Gateway decision overhead" line specifically, with real
+Postgres attached: found by running this suite against a genuinely fresh
+clone with real docker-compose Redis/Postgres (not the in-memory fallback
+this file mostly gets tested against), then a second time after restarting
+the gateway process. p99 read "OVER the 15ms budget" on both runs. Root
+cause verified, not assumed: `/admin/reset`'s `audit_log.reset()` correctly
+and deliberately never touches Postgres rows ("an audit log that can be
+erased through the API is not an audit log" - see audit_log.py), and killing
+the gateway process doesn't touch them either - only a fresh Postgres
+database does. The p50/p99 line is the one part of this scorecard that reads
+*historical* alert rows (`GET /admin/alerts`) rather than judging live
+per-request headers, so with real Postgres it silently mixes in every prior
+run's samples, including ones recorded during unrelated CPU contention (a
+concurrent `npm install`, in the run that surfaced this). The pass/fail
+scorecard above that line is unaffected - each case is judged against its
+own live X-ZT-Decision header, not against history. Verified the fix: with
+Postgres tables genuinely truncated first (`TRUNCATE alerts, incidents;`),
+a clean run reads p99 comfortably inside budget. If this line ever reads
+over budget against a real Postgres deployment, truncate those two tables
+(or point at a fresh database) before concluding the gateway itself is slow.
+
 Usage:
     python attack_sim/simulate.py              # one full pass, prints a scorecard
     python attack_sim/simulate.py --loop       # NOT safe as-is, see CAUTION above

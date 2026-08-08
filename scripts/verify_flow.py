@@ -13,6 +13,19 @@ that the attack simulator cannot reach:
     python scripts/verify_flow.py --gateway http://127.0.0.1:8080
 
 Exits non-zero on any failure, so it can gate CI alongside simulate.py.
+
+CAUTION, same family as simulate.py's own: this file mints "alice" and hits
+/api/accounts/1001 from whatever IP it runs on. Run it (or simulate.py)
+enough times in a row against the same never-restarted gateway and the
+source IP eventually crosses auto_block_ip_threshold on its own accumulated
+history - at that point "SAME token is now rejected" can still correctly
+read block/403, but for the wrong reason (auto_escalated_block short-
+circuiting before the JWT layer even runs, not jwt_revoked), which would
+make "jwt_revoked signal recorded" fail even though revocation itself is
+working. Verified this is genuinely a repeated-run artifact, not a flaw in
+a single pass: on a freshly started gateway this file passes cleanly and
+specifically every time. Restart the gateway (or wait out the cooldown)
+if this file has been run several times back to back and starts failing.
 """
 import argparse
 import json
@@ -58,6 +71,18 @@ def check(label, cond, detail=""):
     print(f"{'PASS' if cond else 'FAIL'}  {label}  {detail}")
 
 
+# "observe" counts alongside "allow" throughout this file for the same
+# reason attack_sim.py's phase_benign accepts it: if this runs against a
+# gateway where the "account" resource is still inside its autonomous
+# hardening window (e.g. attack_sim.py's own phase 4 ran against this same
+# process recently - a natural thing to do back to back, since TESTING.md
+# lists these scripts in sequence), a real, correctly-authorized read comes
+# back "observe" instead of "allow" for up to resource_hardening_cooldown_sec
+# (180s default) - still 200, still real data, never interrupted. Found by
+# actually hitting this: running verify_flow.py right after simulate.py
+# produced 4 false failures here before this was accounted for.
+_OK_DECISIONS = ("allow", "observe")
+
 with httpx.Client(timeout=10.0) as c:
     print("\n=== STEP 1: JWT validation + revocation ===")
     jti = f"sess-{uuid.uuid4().hex[:8]}"
@@ -65,7 +90,7 @@ with httpx.Client(timeout=10.0) as c:
 
     r1 = c.get(f"{GW}/api/accounts/1001", headers=hdr(tok))
     check("valid token with a jti is allowed",
-          r1.headers.get("X-ZT-Decision") == "allow",
+          r1.headers.get("X-ZT-Decision") in _OK_DECISIONS,
           f"decision={r1.headers.get('X-ZT-Decision')} status={r1.status_code}")
 
     rev = c.post(f"{GW}/admin/revoke", headers=ADMIN,
@@ -77,6 +102,14 @@ with httpx.Client(timeout=10.0) as c:
           r2.headers.get("X-ZT-Decision") == "block" and r2.status_code == 403,
           f"decision={r2.headers.get('X-ZT-Decision')} status={r2.status_code}")
 
+    # emit_alert()'s audit write is fire-and-forget by design (main.py) - the
+    # response for r2 above can and does return before that write lands. With
+    # the in-memory fallback the write is effectively instant so this never
+    # showed up; with real Postgres attached it's a genuine race - caught by
+    # actually running this against a real docker-compose Postgres, not the
+    # fallback this file mostly gets tested against. Same wait STEP 8 already
+    # uses below for the same reason.
+    time.sleep(0.4)
     alerts = c.get(f"{GW}/admin/alerts", headers=ADMIN).json()
     revoked_alert = [a for a in alerts
                      if any(s.get("detector") == "jwt_revoked" for s in a.get("signals", []))]
@@ -86,7 +119,7 @@ with httpx.Client(timeout=10.0) as c:
     fresh, _ = mint("alice", jti=f"sess-{uuid.uuid4().hex[:8]}")
     r3 = c.get(f"{GW}/api/accounts/1001", headers=hdr(fresh))
     check("a NEW token for the same subject still works",
-          r3.headers.get("X-ZT-Decision") == "allow",
+          r3.headers.get("X-ZT-Decision") in _OK_DECISIONS,
           f"decision={r3.headers.get('X-ZT-Decision')}")
 
     listed = c.get(f"{GW}/admin/revocations", headers=ADMIN).json()
@@ -97,7 +130,7 @@ with httpx.Client(timeout=10.0) as c:
     tok2, _ = mint("alice", jti=f"sess-{uuid.uuid4().hex[:8]}")
     r4 = c.get(f"{GW}/api/accounts/1001", headers=hdr(tok2))
     check("authorized read is still allowed (not blocked by API3)",
-          r4.headers.get("X-ZT-Decision") == "allow" and r4.status_code == 200,
+          r4.headers.get("X-ZT-Decision") in _OK_DECISIONS and r4.status_code == 200,
           f"decision={r4.headers.get('X-ZT-Decision')}")
 
     time.sleep(0.4)
